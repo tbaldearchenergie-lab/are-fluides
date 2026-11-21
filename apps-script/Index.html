@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ARE Fluides</title>
+<style>
+  :root{--ink:#14201A;--muted:#4A5A51;--green:#1F6B45;--green-dark:#174F34;--mint:#E2F0E7;--bg:#F3F5F2;--line:#E6EAE6;--field:#C9D2CC;--warn:#8A3B08;--warn-bg:#FBE9DD;--white:#FFFFFF}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}
+  button,input,select,textarea{font-family:inherit;font-size:16px;color:var(--ink)}
+  #app{max-width:560px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+  header{position:sticky;top:0;z-index:5;background:var(--ink);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px;min-height:64px}
+  header .t{flex:1;min-width:0}
+  header .k{font-size:12px;color:#A9C9B6;letter-spacing:.04em}
+  header .h{font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ib{width:44px;height:44px;border:0;border-radius:12px;background:#24332B;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:0 0 auto}
+  main{flex:1;padding:16px 16px 110px;display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--white);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .rows{background:var(--white);border-radius:16px;padding:4px 16px}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .row:last-child{border-bottom:0}
+  .row span:first-child{color:var(--muted)}
+  .row span:last-child{font-weight:600;text-align:right}
+  .sec{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
+  .note{font-size:13px;color:var(--muted);line-height:1.45}
+  label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)}
+  input,select,textarea{height:48px;border:1.5px solid var(--field);border-radius:12px;padding:0 12px;background:#fff;width:100%}
+  textarea{height:auto;padding:10px 12px;resize:vertical}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--green);outline-offset:1px}
+  .g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .btn{min-height:52px;border:0;border-radius:14px;background:var(--green);color:#fff;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;padding:0 16px;width:100%}
+  .btn.out{background:#fff;color:var(--ink);border:1.5px solid var(--ink);font-weight:600}
+  .btn.dark{background:var(--ink)}
+  .btn.danger{background:var(--warn-bg);color:var(--warn)}
+  .btn.ghost{background:transparent;color:var(--green);font-weight:600}
+  .btn[disabled]{background:#D5DCD7;color:var(--muted);cursor:not-allowed}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{min-height:44px;padding:0 16px;border-radius:99px;border:1.5px solid var(--field);background:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  .chip.on{border-color:var(--green);background:var(--green);color:#fff}
+  .item{text-align:left;border:0;border-radius:16px;background:#fff;padding:16px;display:flex;flex-direction:column;gap:6px;cursor:pointer;box-shadow:0 1px 2px rgba(20,32,26,.08);width:100%}
+  .item .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .badge{font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px;background:var(--mint);color:var(--green-dark);white-space:nowrap}
+  .badge.grey{background:var(--line);color:var(--ink)}
+  .badge.warn{background:var(--warn-bg);color:var(--warn)}
+  .msg{padding:12px 14px;border-radius:12px;font-size:14px;font-weight:600;line-height:1.4}
+  .msg.err{background:var(--warn-bg);color:var(--warn)}
+  .msg.ok{background:var(--mint);color:var(--green-dark)}
+  .admincard{text-align:left;border:0;border-radius:16px;background:var(--ink);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;width:100%}
+  .admincard small{display:block;font-size:13px;color:#A9C9B6;margin-top:2px}
+  nav{position:fixed;left:0;right:0;bottom:0;z-index:5;background:#fff;border-top:1px solid #E0E5E1;padding:10px 16px calc(14px + env(safe-area-inset-bottom))}
+  nav .in{max-width:528px;margin:0 auto;display:flex;gap:10px;align-items:center}
+  nav .tab{flex:1;min-height:50px;border:0;border-radius:12px;background:transparent;color:var(--muted);font-weight:600;cursor:pointer}
+  nav .tab.on{background:var(--mint);color:var(--green)}
+  .avatar{width:50px;height:50px;border-radius:99px;border:2px solid #A9C9B6;background:var(--mint);color:var(--green);font-weight:700;cursor:pointer;flex:0 0 auto}
+  .avatar.on{background:var(--green);color:#fff;border-color:var(--green)}
+  .search{position:relative}
+  .search svg{position:absolute;left:14px;top:14px;color:var(--muted)}
+  .search input{padding-left:44px}
+  .center{align-items:center;text-align:center}
+  .logo{width:84px;height:84px;border-radius:24px;background:var(--ink);color:#A9C9B6;display:flex;align-items:center;justify-content:center}
+  .spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:s 1s linear infinite;margin:40px auto}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div id="app"><div class="spin" aria-label="Chargement"></div></div>
+<script>
+/* ============================== État ============================== */
+var S = {
+  token: null, user: null, screen: 'loading', stack: [], status: null, msg: null, loaded: false,
+  chantiers: [], search: '', cur: null, form: null, fluides: [],
+  ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '' }, busy: false
+};
+var TYPES = ['PAC AE', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
+var MAIN_FLUIDS = ['R32', 'R410A', 'R454C'];
+
+function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+/* ============================== Serveur ============================== */
+function call(action, data) {
+  return new Promise(function (resolve, reject) {
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (r && r.ok) return resolve(r.data);
+        var err = (r && r.error) || 'Erreur inconnue';
+        if (err === 'SESSION') { sessionLost(); return reject(new Error('Session expirée, reconnecte-toi.')); }
+        reject(new Error(err));
+      })
+      .withFailureHandler(function (e) { reject(new Error(e && e.message ? e.message : 'Connexion impossible')); })
+      .api({ action: action, token: S.token, data: data || {} });
+  });
+}
+function sessionLost() {
+  S.token = null; S.user = null; store('are_token', null);
+  S.stack = []; S.form = { email: '', password: '' }; S.screen = 'login'; S.msg = { err: true, text: 'Session expirée, reconnecte-toi.' }; render();
+}
+function run(promise, okText) {
+  S.busy = true; render();
+  return promise.then(function (x) { S.busy = false; if (okText) S.msg = { text: okText }; render(); return x; })
+    .catch(function (e) { S.busy = false; S.msg = { err: true, text: e.message }; render(); throw e; });
+}
+
+/* ============================== Outils ============================== */
+function esc(s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function initials(u) { return ((u.prenom || '?').charAt(0) + (u.nom || '').charAt(0)).toUpperCase(); }
+function isAdmin() { return S.user && S.user.role === 'admin'; }
+function go(screen, keepStack) { if (!keepStack) S.stack.push(S.screen); S.screen = screen; S.msg = null; render(); window.scrollTo(0, 0); }
+function home() { S.stack = []; S.screen = 'home'; S.msg = null; loadChantiers(); }
+function back() { S.screen = S.stack.pop() || 'home'; S.msg = null; render(); window.scrollTo(0, 0); }
+function fluidInfo(code) { for (var i = 0; i < S.fluides.length; i++) if (S.fluides[i].code === code) return S.fluides[i]; return null; }
+function genPassword() { var c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', s = ''; for (var i = 0; i < 10; i++) s += c.charAt(Math.floor(Math.random() * c.length)); return s; }
+var ICON = {
+  back: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
+  home: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>',
+  plus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  search: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
+  users: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 010 7M18.5 14.8c1.6.8 2.6 2.6 3 5.2"/></svg>',
+  drop: '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c3 4 5 6.5 5 9.5a5 5 0 01-10 0C7 9.5 9 7 12 3z"/><path d="M10 14.5a2 2 0 002 2"/></svg>'
+};
+
+/* ============================== Données ============================== */
+function loadChantiers() {
+  render();
+  Promise.all([call('listChantiers'), S.fluides.length ? Promise.resolve(S.fluides) : call('listFluides')])
+    .then(function (r) { S.chantiers = r[0]; S.fluides = r[1]; S.loaded = true; render(); })
+    .catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
+}
+function emptyForm() {
+  return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', tel: '', email: '', marque: '', modele: '',
+    longueur: '', precharge: '', gpm: '', type: 'PAC AE', fluideChoix: 'R32', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '' };
+}
+function formFromChantier(c) {
+  var f = emptyForm();
+  Object.keys(f).forEach(function (k) { if (c[k] !== undefined) f[k] = c[k]; });
+  f.fluideChoix = !c.fluide ? '' : (MAIN_FLUIDS.indexOf(c.fluide) >= 0 ? c.fluide : 'Autre');
+  f.fluideAutre = f.fluideChoix === 'Autre' ? c.fluide : '';
+  var auto = fluidInfo(c.fluide);
+  f.gwpManuel = (c.gwp && (!auto || String(auto.gwp) !== String(c.gwp))) ? c.gwp : '';
+  return f;
+}
+function formFluid(f) { return f.fluideChoix === 'Autre' ? (f.fluideAutre || '').trim() : f.fluideChoix; }
+
+/* ============================== Actions ============================== */
+var A = {
+  back: back, home: home,
+  goProfile: function () { if (S.screen !== 'profile') go('profile'); },
+  goBottles: function () { S.msg = { text: 'Les bouteilles arrivent avec la livraison 3.' }; render(); },
+  doSetup: function () {
+    var d = S.form;
+    if (d.password !== d.confirm) { S.msg = { err: true, text: 'Les deux mots de passe ne sont pas identiques.' }; return render(); }
+    run(call('setup', { email: d.email, password: d.password, prenom: d.prenom, nom: d.nom })).then(loggedIn);
+  },
+  doLogin: function () { run(call('login', { email: S.form.email, password: S.form.password })).then(loggedIn); },
+  logout: function (arg) {
+    call('logout').catch(function () {});
+    S.token = null; S.user = null; store('are_token', null); S.stack = [];
+    S.form = { email: '', password: '' }; S.screen = 'login';
+    S.msg = arg === 'switch' ? { text: 'Changement d’opérateur : le nouvel opérateur se connecte avec son e-mail et son mot de passe.' } : null;
+    render();
+  },
+  newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
+  openChantier: function (id) { S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); },
+  editChantier: function () { S.form = formFromChantier(S.cur); go('chantierForm'); },
+  saveChantier: function () {
+    var f = S.form, fl = formFluid(f);
+    var data = {
+      id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville, tel: f.tel, email: f.email,
+      marque: f.marque, modele: f.modele, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
+      fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires
+    };
+    run(call('saveChantier', data), f.id ? 'Fiche chantier enregistrée.' : 'Chantier créé.').then(function (c) {
+      S.cur = c; S.stack = ['home']; S.screen = 'chantier';
+      call('listChantiers').then(function (l) { S.chantiers = l; });
+      render();
+    });
+  },
+  setType: function (v) { S.form.type = v; render(); },
+  setInflam: function (v) { S.form.inflam = v; render(); },
+  startMes: function () { S.msg = { text: 'La mise en service arrive avec la livraison 2.' }; render(); },
+  changePassword: function () {
+    run(call('changePassword', S.pwd), 'Mot de passe modifié.').then(function () { S.pwd = { oldPassword: '', newPassword: '' }; render(); });
+  },
+  goAdmin: function () { go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
+  newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
+  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, role: o.role, attestation: o.attestation, password: '', actif: o.actif }; go('opForm'); },
+  toggleActif: function () {
+    var f = S.opForm, on = !f.actif;
+    run(call('setOperateurActif', { id: f.id, actif: on }), on ? 'Compte réactivé.' : 'Compte désactivé : il ne peut plus se connecter.').then(function (l) { S.ops = l; f.actif = on; render(); });
+  },
+  askDelete: function () { S.confirmDelete = true; render(); },
+  cancelDelete: function () { S.confirmDelete = false; render(); },
+  deleteOp: function () {
+    S.confirmDelete = false;
+    run(call('deleteOperateur', { id: S.opForm.id }), 'Compte supprimé.').then(function (l) { S.ops = l; S.screen = S.stack.pop() || 'admin'; render(); });
+  },
+  setRole: function (v) { S.opForm.role = v; render(); },
+  genPwd: function () { S.opForm.password = genPassword(); render(); },
+  saveOp: function () {
+    var f = S.opForm;
+    run(call('saveOperateur', f), f.password ? 'Compte enregistré. Transmets l’e-mail et le mot de passe à l’opérateur.' : 'Compte enregistré.').then(function (l) {
+      S.ops = l; S.screen = S.stack.pop() || 'admin'; render();
+    });
+  }
+};
+function loggedIn(r) {
+  S.token = r.token; S.user = r.user; store('are_token', r.token);
+  S.form = null; S.stack = []; S.screen = 'home'; S.msg = null; loadChantiers();
+}
+
+/* ============================== Écrans ============================== */
+function field(label, path, opt) {
+  opt = opt || {};
+  var v = getPath(path);
+  return '<label>' + esc(label) + '<input type="' + (opt.type || 'text') + '"' + (opt.mode ? ' inputmode="' + opt.mode + '"' : '') +
+    (opt.auto ? ' autocomplete="' + opt.auto + '"' : '') + ' data-bind="' + path + '" value="' + esc(v) + '" placeholder="' + esc(opt.ph || '') + '"></label>';
+}
+function getPath(p) { var o = S; p.split('.').forEach(function (k) { o = o ? o[k] : ''; }); return o === undefined || o === null ? '' : o; }
+function setPath(p, v) { var ks = p.split('.'), o = S; for (var i = 0; i < ks.length - 1; i++) o = o[ks[i]]; o[ks[ks.length - 1]] = v; }
+function chips(list, current, act) {
+  return '<div class="chips">' + list.map(function (x) {
+    var val = Array.isArray(x) ? x[0] : x, lab = Array.isArray(x) ? x[1] : x;
+    return '<button type="button" class="chip' + (val === current ? ' on' : '') + '" data-act="' + act + '" data-arg="' + esc(val) + '">' + esc(lab) + '</button>';
+  }).join('') + '</div>';
+}
+function msgBox() { return S.msg ? '<div class="msg ' + (S.msg.err ? 'err' : 'ok') + '" role="status">' + esc(S.msg.text) + '</div>' : ''; }
+
+var V = {
+  loading: function () { return '<div class="spin" aria-label="Chargement"></div>'; },
+
+  setup: function () {
+    var f = S.form;
+    return '<div class="center card" style="background:transparent;padding:32px 0 0"><div class="logo">' + ICON.drop + '</div>' +
+      '<div style="font-size:24px;font-weight:700">Fluides ARE</div><div class="note">Première connexion : crée ton compte administrateur.</div></div>' + msgBox() +
+      '<div class="card">' + field('Prénom', 'form.prenom') + field('Nom', 'form.nom') +
+      field('Adresse Gmail propriétaire de l’appli', 'form.email', { type: 'email', auto: 'username' }) +
+      field('Mot de passe (8 caractères minimum)', 'form.password', { type: 'password', auto: 'new-password' }) +
+      field('Confirme le mot de passe', 'form.confirm', { type: 'password', auto: 'new-password' }) +
+      '<button class="btn" data-act="doSetup"' + (S.busy ? ' disabled' : '') + '>Créer mon compte admin</button></div>' +
+      '<div class="note">Seul le propriétaire du compte Google qui héberge l’appli peut faire cette étape, une seule fois.</div>';
+  },
+
+  login: function () {
+    return '<div class="center card" style="background:transparent;padding:56px 0 0"><div class="logo">' + ICON.drop + '</div>' +
+      '<div style="font-size:24px;font-weight:700">Fluides ARE</div><div class="note">Mises en service, CERFA et suivi des bouteilles</div></div>' + msgBox() +
+      '<div class="card">' + field('Adresse e-mail', 'form.email', { type: 'email', auto: 'username' }) +
+      field('Mot de passe', 'form.password', { type: 'password', auto: 'current-password' }) +
+      '<button class="btn" data-act="doLogin"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Connexion…' : 'Se connecter') + '</button></div>' +
+      '<div class="note center">Les comptes sont créés par l’administrateur. Mot de passe oublié : contacte-le.</div>';
+  },
+
+  home: function () {
+    var q = S.search.trim().toLowerCase();
+    var list = S.chantiers.filter(function (c) {
+      return !q || [c.client, c.adresse, c.ville, c.cp, c.projet, c.marque, c.modele].join(' ').toLowerCase().indexOf(q) >= 0;
+    });
+    var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox();
+    if (isAdmin()) h += '<button class="admincard" data-act="goAdmin">' + ICON.users + '<span style="flex:1"><b>Gestion des comptes</b><small>Créer et modifier les comptes opérateurs</small></span><span aria-hidden="true">›</span></button>';
+    h += '<button class="btn" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
+    h += '<div class="sec">Chantiers (' + S.chantiers.length + ')</div>';
+    h += '<div class="search">' + ICON.search + '<input type="search" aria-label="Rechercher un chantier" placeholder="Client, ville, n° projet, machine…" data-bind="search" data-live="1" value="' + esc(S.search) + '"></div>';
+    if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
+    else if (!S.chantiers.length) h += '<div class="note center">Aucun chantier pour l’instant. Crée le premier avec « Nouveau chantier ».</div>';
+    else if (!list.length) h += '<div class="note center">Aucun chantier ne correspond à « ' + esc(S.search) + ' ».</div>';
+    h += '<div id="list" style="display:flex;flex-direction:column;gap:10px">' + list.slice(0, 80).map(function (c) {
+      return '<button class="item" data-act="openChantier" data-arg="' + esc(c.id) + '"><span class="top"><span class="badge">' + esc(c.type || '—') + '</span>' +
+        '<span class="badge ' + (c.misEnService ? 'grey' : 'warn') + '">' + (c.misEnService ? 'MES ' + esc(c.dateMes) : 'À mettre en service') + '</span></span>' +
+        '<span style="font-size:18px;font-weight:700">' + esc(c.client || 'Sans nom') + '</span>' +
+        '<span class="note">' + esc([c.ville, c.projet].filter(Boolean).join(' · ')) + '</span>' +
+        '<span style="font-size:14px">' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'Unité extérieure à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</span></button>';
+    }).join('') + '</div>';
+    if (list.length > 80) h += '<div class="note center">Affine la recherche pour voir les autres chantiers.</div>';
+    return h;
+  },
+
+  chantier: function () {
+    var c = S.cur;
+    var rows = [['Type', c.type], ['Marque UE', c.marque], ['Modèle UE', c.modele], ['N° série UE', c.serieUE], ['N° série UI', c.serieUI],
+      ['Fluide', c.fluide], ['GWP', c.gwp], ['Liaisons', c.longueur ? c.longueur + ' m' : ''], ['Précharge / charge', (c.precharge || '?') + ' m / ' + (c.gpm || '?') + ' g/m'],
+      ['Mise en service', c.dateMes || 'pas encore']];
+    return msgBox() + '<div class="card" style="gap:6px"><div style="font-size:18px;font-weight:700">' + esc(c.client) + '</div>' +
+      '<div class="note">' + esc([c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Adresse à compléter') + '</div>' +
+      '<div class="note">' + esc([c.tel, c.email, c.projet].filter(Boolean).join(' · ')) + '</div></div>' +
+      '<div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + esc(r[1] || '—') + '</span></div>'; }).join('') + '</div>' +
+      (c.commentaires ? '<div class="card"><div class="note">' + esc(c.commentaires) + '</div></div>' : '') +
+      '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' +
+      '<button class="btn" data-act="startMes">Démarrer la mise en service</button>';
+  },
+
+  chantierForm: function () {
+    var f = S.form, fl = formFluid(f), info = fluidInfo(fl);
+    var gwpHint = f.gwpManuel ? 'Valeur saisie à la main' : (info ? 'Rempli automatiquement pour ' + fl + ' : ' + info.gwp + ' · modifiable' : (fl ? 'Fluide inconnu : saisis le GWP à la main' : ''));
+    var opts = ['', 'R32', 'R410A', 'R454C', 'Autre'].map(function (v) { return '<option value="' + v + '"' + (f.fluideChoix === v ? ' selected' : '') + '>' + (v === '' ? 'Non renseigné' : v === 'Autre' ? 'Autre…' : v) + '</option>'; }).join('');
+    var types = TYPES.map(function (v) { return '<option' + (f.type === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
+    return msgBox() + '<div class="sec">Client</div><div class="card">' +
+      '<div class="g2">' + field('Prénom', 'form.prenom') + field('Nom *', 'form.nom') + '</div>' +
+      field('Adresse', 'form.adresse') + '<div class="g2">' + field('Code postal', 'form.cp', { mode: 'numeric' }) + field('Ville', 'form.ville') + '</div>' +
+      '<div class="g2">' + field('Téléphone', 'form.tel', { type: 'tel' }) + field('N° projet', 'form.projet') + '</div>' + field('E-mail', 'form.email', { type: 'email' }) + '</div>' +
+      '<div class="sec">Unité extérieure</div><div class="card">' + field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) + field('Modèle', 'form.modele', { ph: 'Ex. ERGA04EV' }) +
+      '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques</div><div class="g3">' +
+      field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
+      '<div class="sec">Installation</div><div class="card">' +
+      '<label>Type d’installation<select data-bind="form.type">' + types + '</select></label>' +
+      '<label>Fluide de la machine<select data-bind="form.fluideChoix" data-rerender="1">' + opts + '</select></label>' +
+      (f.fluideChoix === 'Autre' ? field('Nom du fluide', 'form.fluideAutre', { ph: 'Ex. R407C' }) : '') +
+      (f.fluideChoix === 'Autre' && fl && !info ? '<div class="note">Ce fluide est-il inflammable (A2L ou A3) ?</div>' + chips([['oui', 'Inflammable'], ['non', 'Non inflammable']], f.inflam, 'setInflam') : '') +
+      '<label>GWP du fluide<input type="text" inputmode="numeric" data-bind="form.gwpManuel" value="' + esc(f.gwpManuel) + '" placeholder="' + esc(info ? String(info.gwp) : 'À saisir') + '"><span style="font-size:13px">' + esc(gwpHint) + '</span></label>' +
+      '<label>Commentaires<textarea rows="3" data-bind="form.commentaires">' + esc(f.commentaires) + '</textarea></label></div>' +
+      '<button class="btn" data-act="saveChantier"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le chantier') + '</button>';
+  },
+
+  profile: function () {
+    var u = S.user;
+    var h = msgBox() + '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><span class="avatar on" style="display:flex;align-items:center;justify-content:center">' + esc(initials(u)) + '</span>' +
+      '<span><b style="font-size:18px">' + esc(u.prenom + ' ' + u.nom) + '</b><br><span class="note">' + (u.role === 'admin' ? 'Administrateur' : 'Opérateur fluides') + '</span></span></div>' +
+      '<div class="rows"><div class="row"><span>E-mail</span><span>' + esc(u.email) + '</span></div><div class="row"><span>N° d’attestation</span><span>' + esc(u.attestation || '—') + '</span></div></div>';
+    if (isAdmin()) h += '<button class="btn dark" data-act="goAdmin">Gestion des comptes</button>';
+    h += '<div class="sec">Changer mon mot de passe</div><div class="card">' + field('Mot de passe actuel', 'pwd.oldPassword', { type: 'password', auto: 'current-password' }) +
+      field('Nouveau mot de passe (8 caractères minimum)', 'pwd.newPassword', { type: 'password', auto: 'new-password' }) +
+      '<button class="btn out" data-act="changePassword">Enregistrer le nouveau mot de passe</button></div>' +
+      '<button class="btn out" data-act="logout" data-arg="switch">Changer d’opérateur</button>' +
+      '<button class="btn danger" data-act="logout">Se déconnecter</button>' +
+      '<div class="note">' + (isAdmin() ? 'Ton nom et ton attestation seront repris sur tes propres CERFA.' : 'Ton profil est tenu à jour par l’administrateur. Ton nom et ton numéro d’attestation sont repris sur tes CERFA.') + '</div>';
+    return h;
+  },
+
+  admin: function () {
+    return msgBox() + '<button class="btn" data-act="newOp">' + ICON.plus + 'Créer un compte</button><div class="sec">Comptes (' + S.ops.length + ')</div>' +
+      S.ops.map(function (o) {
+        return '<button class="item" data-act="editOp" data-arg="' + esc(o.id) + '"' + (o.actif ? '' : ' style="opacity:.6"') + '><span style="font-size:16px;font-weight:700">' + esc((o.prenom + ' ' + o.nom).trim() || 'Sans nom') + '</span>' +
+          '<span class="note">' + esc(o.email || 'e-mail à renseigner') + '</span><span class="chips" style="gap:6px">' + (o.actif ? '' : '<span class="badge warn">Désactivé</span>') + '<span class="badge ' + (o.role === 'admin' ? '' : 'grey') + '">' + (o.role === 'admin' ? 'Admin' : 'Opérateur') + '</span>' +
+          '<span class="badge ' + (o.hasPassword ? '' : 'warn') + '">' + (o.hasPassword ? 'Peut se connecter' : 'Mot de passe à définir') + '</span>' +
+          '<span class="badge ' + (o.attestation ? '' : 'warn') + '">' + (o.attestation ? 'Attestation ' + esc(o.attestation) : 'Attestation à renseigner') + '</span></span></button>';
+      }).join('') + '<div class="note">Les opérateurs ne peuvent pas créer de compte. Tu crées chaque compte avec son e-mail et son mot de passe, puis tu le lui transmets.</div>';
+  },
+
+  opForm: function () {
+    var f = S.opForm;
+    return msgBox() + '<div class="sec">Connexion</div><div class="card">' + field('Adresse e-mail (identifiant)', 'opForm.email', { type: 'email' }) +
+      '<label for="pw">' + (f.id ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe') + '</label>' +
+      '<div style="display:flex;gap:8px"><input id="pw" type="text" data-bind="opForm.password" value="' + esc(f.password) + '"><button type="button" class="chip" data-act="genPwd">Générer</button></div>' +
+      '<div class="note">Rôle</div>' + chips([['operateur', 'Opérateur'], ['admin', 'Admin']], f.role, 'setRole') + '</div>' +
+      '<div class="sec">Profil</div><div class="card"><div class="g2">' + field('Prénom', 'opForm.prenom') + field('Nom', 'opForm.nom') + '</div>' +
+      field('N° d’attestation d’aptitude', 'opForm.attestation') +
+      '<div class="note">Le dépôt du fichier de l’attestation arrive avec la livraison 3. En attendant, garde-le dans le dossier Drive « Opérateurs ».</div></div>' +
+      '<button class="btn" data-act="saveOp"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le compte') + '</button>' +
+      (f.id && f.id !== S.user.id ?
+        '<div class="sec" style="margin-top:12px">Gérer ce compte</div>' +
+        (f.actif ?
+          '<button class="btn out" data-act="toggleActif">Désactiver le compte</button><div class="note">L’opérateur ne peut plus se connecter, mais son nom reste sur les CERFA déjà signés. À utiliser quand quelqu’un quitte l’entreprise.</div>' :
+          '<button class="btn out" data-act="toggleActif">Réactiver le compte</button>') +
+        (S.confirmDelete ?
+          '<div class="msg err">Supprimer définitivement ce compte ? Cette action ne peut pas être annulée.</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteOp">Oui, supprimer</button></div>' :
+          '<button class="btn danger" data-act="askDelete">Supprimer le compte</button><div class="note">Possible seulement pour un compte qui n’a jamais servi (erreur de saisie, ligne d’exemple).</div>') : '');
+  }
+};
+
+var TITLES = { setup: 'Première connexion', login: 'Connexion', home: 'Accueil', chantier: 'Fiche chantier', profile: 'Mon profil', admin: 'Gestion des comptes', opForm: 'Compte opérateur', loading: 'Chargement' };
+
+function render() {
+  var scr = S.screen, logged = !!S.user;
+  var showHeader = scr !== 'login' && scr !== 'setup';
+  var title = scr === 'chantierForm' ? (S.form && S.form.id ? 'Modifier le chantier' : 'Nouveau chantier') : (scr === 'opForm' && S.opForm && !S.opForm.id ? 'Nouveau compte' : TITLES[scr]);
+  var html = '';
+  if (showHeader) {
+    html += '<header>' + (S.stack.length ? '<button class="ib" aria-label="Retour" data-act="back">' + ICON.back + '</button>' : '') +
+      '<div class="t"><div class="k">ARCHENERGIE RENOUVELABLE</div><div class="h">' + esc(title) + '</div></div>' +
+      (logged && scr !== 'home' ? '<button class="ib" aria-label="Accueil" data-act="home">' + ICON.home + '</button>' : '') + '</header>';
+  }
+  html += '<main>' + (V[scr] ? V[scr]() : '') + '</main>';
+  if (logged && (scr === 'home' || scr === 'profile' || scr === 'admin')) {
+    html += '<nav><div class="in"><button class="tab' + (scr === 'home' ? ' on' : '') + '" data-act="home">Accueil</button>' +
+      '<button class="tab" data-act="goBottles">Bouteilles</button>' +
+      '<button class="avatar' + (scr === 'profile' ? ' on' : '') + '" aria-label="Mon profil" data-act="goProfile">' + esc(initials(S.user)) + '</button></div></nav>';
+  }
+  var focused = document.activeElement && document.activeElement.getAttribute('data-bind');
+  document.getElementById('app').innerHTML = html;
+  if (focused) { var el = document.querySelector('[data-bind="' + focused + '"]'); if (el) { el.focus(); try { var n = el.value.length; el.setSelectionRange(n, n); } catch (e) {} } }
+}
+
+/* ============================== Événements ============================== */
+document.addEventListener('click', function (e) {
+  var el = e.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  e.preventDefault();
+  var fn = A[el.getAttribute('data-act')];
+  if (fn) fn(el.getAttribute('data-arg'));
+});
+document.addEventListener('input', function (e) {
+  var el = e.target, p = el.getAttribute && el.getAttribute('data-bind');
+  if (!p) return;
+  setPath(p, el.value);
+  if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
+});
+document.addEventListener('change', function (e) {
+  var el = e.target, p = el.getAttribute && el.getAttribute('data-bind');
+  if (!p) return;
+  setPath(p, el.value);
+  if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Enter') return;
+  if (S.screen === 'login') A.doLogin();
+  else if (S.screen === 'setup') A.doSetup();
+});
+
+/* ============================== Démarrage ============================== */
+(function start() {
+  S.token = load('are_token');
+  call('status').then(function (st) {
+    S.status = st;
+    if (st.needsSetup) { S.form = { prenom: st.adminPrenom || '', nom: '', email: st.ownerEmail || '', password: '', confirm: '' }; S.screen = 'setup'; return render(); }
+    if (!S.token) { S.form = { email: '', password: '' }; S.screen = 'login'; return render(); }
+    call('me').then(function (u) { S.user = u; S.screen = 'home'; loadChantiers(); })
+      .catch(function () { S.form = { email: '', password: '' }; if (S.screen !== 'login') { S.screen = 'login'; S.msg = null; render(); } });
+  }).catch(function (e) {
+    document.getElementById('app').innerHTML = '<main><div class="msg err">Impossible de joindre le serveur : ' + esc(e.message) + '</div></main>';
+  });
+})();
+</script>
+</body>
+</html>

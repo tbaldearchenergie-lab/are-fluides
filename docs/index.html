@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ARE Fluides</title>
+<meta name="theme-color" content="#14201A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ARE Fluides">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="favicon.png">
+<style>
+  html,body{margin:0;height:100%;background:#14201A;overflow:hidden}
+  body{padding-top:env(safe-area-inset-top);box-sizing:border-box}
+  iframe{display:block;border:0;width:100%;height:100%;background:#F3F5F2}
+  #splash{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#14201A;color:#A9C9B6;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;transition:opacity .3s}
+  #splash img{width:96px;height:96px;border-radius:22px}
+  #splash .t{color:#fff;font-size:20px;font-weight:700}
+  #splash .s{font-size:14px;text-align:center;padding:0 24px;line-height:1.45}
+  #splash a{color:#fff;font-weight:700}
+  .bar{width:28px;height:28px;border:3px solid #24332B;border-top-color:#A9C9B6;border-radius:50%;animation:r 1s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="splash"><img src="icon-192.png" alt=""><div class="t">ARE Fluides</div><div class="bar" role="status" aria-label="Chargement"></div><div class="s" id="hint"></div></div>
+<script src="config.js"></script>
+<script>
+(function () {
+  var url = window.ARE_APP_URL || '';
+  var splash = document.getElementById('splash'), hint = document.getElementById('hint');
+  if (!/^https:\/\/script\.google\.com\/.+\/exec$/.test(url)) {
+    hint.innerHTML = 'Adresse de l’application non configurée : renseigne-la dans le fichier config.js.';
+    splash.querySelector('.bar').style.display = 'none';
+    return;
+  }
+  var f = document.createElement('iframe');
+  f.src = url;
+  f.title = 'ARE Fluides';
+  f.allow = 'camera; clipboard-write';
+  f.onload = function () { splash.style.opacity = '0'; setTimeout(function () { splash.style.display = 'none'; }, 300); };
+  document.body.appendChild(f);
+  // Si l'appli ne s'affiche pas (réseau lent ou blocage), on propose de l'ouvrir directement.
+  setTimeout(function () {
+    if (splash.style.display !== 'none') hint.innerHTML = 'Ça prend du temps… <a href="' + url + '">Ouvrir directement l’application</a>';
+  }, 12000);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
+})();
+</script>
+</body>
+</html>
