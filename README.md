@@ -22,5 +22,5 @@ L'adresse de l'application est réglée dans `docs/config.js`.
 
 - **L1** : connexion, comptes admin / opérateurs (désactivation, suppression), chantiers (création, modification, recherche).
 - **Base machines** : onglet « Machines » du tableur (tous les appareils : UE, UI, modules hydrauliques, ballons ; seules les UE et monoblocs sont proposées dans l’appli). Le choix du modèle d'UE remplit marque, fluide, longueur préchargée et charge en g/m.
-- **L2** (à venir) : mise en service, manipulations, photos, signature, CERFA PDF, rapport d'installation.
+- **L2** (à venir) : mise en service, manipulations, photos, signature, CERFA PDF, rapport d'installation. Droits : l'administrateur modifie ou supprime toute mise en service ; un opérateur seulement celles de ses propres chantiers. Un chantier ne se supprime qu'après suppression de sa mise en service.
 - **L3** (à venir) : bouteilles, détecteurs, distributeurs, déclaration annuelle.

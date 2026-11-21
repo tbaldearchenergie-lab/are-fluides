@@ -515,9 +515,12 @@ var V = {
   }
 };
 
-function canDeleteChantier(c) { return !!(c && S.user && !c.misEnService && (S.user.role === 'admin' || c.creePar === S.user.id)); }
+/** Droits : l'administrateur agit sur tous les chantiers, un opérateur seulement sur ceux qu'il a créés. */
+function ownsChantier(c) { return !!(c && S.user && (S.user.role === 'admin' || c.creePar === S.user.id)); }
+function canDeleteChantier(c) { return ownsChantier(c) && !c.misEnService; }
 function deleteBlock(c) {
-  if (!canDeleteChantier(c)) return '';
+  if (!ownsChantier(c)) return '<div class="note" style="text-align:center">Seul l’opérateur qui a créé ce chantier ou un administrateur peut le supprimer.</div>';
+  if (c.misEnService) return '<div class="note" style="text-align:center">Ce chantier ne peut pas être supprimé car une mise en service a déjà été réalisée. Pour le supprimer, il faut d’abord supprimer la mise en service.</div>';
   return S.confirmDelete
     ? '<div class="msg err">Supprimer la fiche chantier de ' + esc(c.client) + ' ? Elle disparaît de la liste (une copie est gardée dans le tableur).</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteChantier">Oui, supprimer</button></div>'
     : '<button class="btn danger" data-act="askDelete">Supprimer ce chantier</button>';
