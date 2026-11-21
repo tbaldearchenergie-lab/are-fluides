@@ -68,6 +68,7 @@
   .spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:s 1s linear infinite;margin:40px auto}
   @keyframes s{to{transform:rotate(360deg)}}
   .hidden{display:none}
+  body.typing .loginlogo{display:none}
   .steps{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
   .steps .st{display:flex;flex-direction:column;gap:5px;min-width:0}
   .steps i{display:block;height:6px;border-radius:99px;background:#D5DCD7}
@@ -385,7 +386,7 @@ function field(label, path, opt) {
   opt = opt || {};
   var v = getPath(path), pw = opt.type === 'password', shown = pw && S.showPw[path];
   var input = '<input type="' + (pw ? (shown ? 'text' : 'password') : (opt.type || 'text')) + '"' + (opt.mode ? ' inputmode="' + opt.mode + '"' : '') +
-    (opt.auto ? ' autocomplete="' + opt.auto + '"' : '') + (pw ? ' autocapitalize="off" spellcheck="false"' : '') + ' data-bind="' + path + '" value="' + esc(v) + '" placeholder="' + esc(opt.ph || '') + '">';
+    (opt.auto ? ' autocomplete="' + opt.auto + '"' : '') + (opt.enter ? ' enterkeyhint="' + opt.enter + '"' : '') + (pw ? ' autocapitalize="off" spellcheck="false"' : '') + ' data-bind="' + path + '" value="' + esc(v) + '" placeholder="' + esc(opt.ph || '') + '">';
   if (pw && !opt.noEye) input = '<span class="pw">' + input + '<button type="button" class="eye" data-act="togglePw" data-arg="' + path + '" aria-label="' + (shown ? 'Masquer' : 'Afficher') + ' le mot de passe">' + (shown ? ICON.eyeOff : ICON.eye) + '</button></span>';
   return '<label>' + esc(label) + input + '</label>';
 }
@@ -404,7 +405,7 @@ var V = {
 
   setup: function () {
     var f = S.form;
-    return '<div class="center card" style="background:transparent;padding:32px 0 0"><div class="logo">' + ICON.drop + '</div>' +
+    return '<div class="center card loginlogo" style="background:transparent;padding:32px 0 0"><div class="logo">' + ICON.drop + '</div>' +
       '<div style="font-size:24px;font-weight:700">Fluides ARE</div><div class="note">Première connexion : crée ton compte administrateur.</div></div>' + msgBox() +
       '<div class="card">' + field('Prénom', 'form.prenom') + field('Nom', 'form.nom') +
       field('Adresse Gmail propriétaire de l’appli', 'form.email', { type: 'email', auto: 'username' }) +
@@ -415,14 +416,14 @@ var V = {
   },
 
   login: function () {
-    return '<div class="center card" style="background:transparent;padding:56px 0 0"><div class="logo">' + ICON.drop + '</div>' +
+    return '<div class="center card loginlogo" style="background:transparent;padding:56px 0 0"><div class="logo">' + ICON.drop + '</div>' +
       '<div style="font-size:24px;font-weight:700">Fluides ARE</div><div class="note">Mises en service, CERFA et suivi des bouteilles</div></div>' + msgBox() +
       '<div class="card">' + field('Adresse e-mail', 'form.email', { type: 'email', auto: 'username' }) +
-      field('Mot de passe', 'form.password', { type: 'password', auto: 'current-password' }) +
+      field('Mot de passe', 'form.password', { type: 'password', auto: 'current-password', enter: 'go' }) +
       '<label style="flex-direction:row;align-items:center;gap:10px;font-size:15px;color:var(--ink);min-height:44px;cursor:pointer">' +
       '<input type="checkbox" data-bind="form.remember"' + (S.form && S.form.remember === false ? '' : ' checked') + ' style="width:22px;height:22px;flex:0 0 auto;accent-color:var(--green)">' +
       '<span>Rester connecté sur cet appareil<br><span class="note">30 jours, prolongés à chaque ouverture. À décocher sur un appareil partagé.</span></span></label>' +
-      '<button class="btn" data-act="doLogin"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Connexion…' : 'Se connecter') + '</button></div>' +
+      '<button class="btn" id="loginBtn" data-act="doLogin"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Connexion…' : 'Se connecter') + '</button></div>' +
       '<div class="note center">Les comptes sont créés par l’administrateur. Mot de passe oublié : contacte-le.</div>';
   },
 
@@ -1285,6 +1286,19 @@ document.addEventListener('change', function (e) {
   if (p === 'mes.d.bouteille') { var bb = S.ctx.bouteilles.filter(function (x) { return x.ref === el.value; })[0]; if (bb && bb.pesee && !S.mes.d.poidsAvant) S.mes.d.poidsAvant = bb.pesee; render(); return; }
   if (p.indexOf('mes.d.') === 0) { updateLive(p); return; }
   if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
+});
+/* Clavier du téléphone ouvert sur l'écran de connexion : on masque le logo et on garde le bouton visible */
+document.addEventListener('focusin', function (e) {
+  if ((S.screen !== 'login' && S.screen !== 'setup') || e.target.tagName !== 'INPUT' || e.target.type === 'checkbox') return;
+  document.body.classList.add('typing');
+  var show = function () { var b = document.getElementById('loginBtn') || document.querySelector('[data-act="doSetup"]'); if (b) b.scrollIntoView({ block: 'end', behavior: 'smooth' }); };
+  setTimeout(show, 350); setTimeout(show, 800);
+});
+document.addEventListener('focusout', function () {
+  setTimeout(function () { var a = document.activeElement; if (!a || a.tagName !== 'INPUT') document.body.classList.remove('typing'); }, 200);
+});
+if (window.visualViewport) window.visualViewport.addEventListener('resize', function () {
+  if (document.body.classList.contains('typing')) { var b = document.getElementById('loginBtn') || document.querySelector('[data-act="doSetup"]'); if (b) b.scrollIntoView({ block: 'end' }); }
 });
 document.addEventListener('keydown', function (e) {
   if (e.key !== 'Enter') return;
