@@ -149,7 +149,7 @@ function loadChantiers() {
     .catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
 }
 function emptyForm() {
-  return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', marque: '', modele: '',
+  return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', marque: '', modele: '', chargeUsine: '',
     longueur: '', precharge: '', gpm: '', type: '', fluideChoix: '', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '' };
 }
 function formFromChantier(c) {
@@ -172,7 +172,9 @@ function applyMachine(f, m, seulementVides) {
   var put = function (k, v) { if (v && (!seulementVides || !f[k])) f[k] = v; };
   f.modele = m.modele; f._modeleAutre = false; f._marqueAutre = false;
   if (m.marque) f.marque = m.marque;
-  put('precharge', m.precharge); put('gpm', m.gpm); put('type', m.type);
+  put('precharge', m.precharge); put('gpm', m.gpm); put('type', m.type); put('chargeUsine', m.charge);
+  // Machine sans liaisons frigorifiques (monobloc hydraulique ou RAC Solo) : longueur, précharge et charge à 0
+  if (m.liaison && !/frigo/i.test(m.liaison)) { f.longueur = '0'; f.precharge = '0'; f.gpm = '0'; }
   if (m.fluide && (!seulementVides || !formFluid(f))) {
     if (MAIN_FLUIDS.indexOf(m.fluide) >= 0) { f.fluideChoix = m.fluide; f.fluideAutre = ''; }
     else { f.fluideChoix = 'Autre'; f.fluideAutre = m.fluide; }
@@ -187,7 +189,13 @@ function brands() {
 /** Modèle retiré : on efface aussi la précharge et le g/m qu'il avait remplis. */
 function dropMachine(f) {
   var m = findMachine(f.modele);
-  if (m) { if (f.precharge === m.precharge) f.precharge = ''; if (f.gpm === m.gpm) f.gpm = ''; }
+  if (m) {
+    var hy = m.liaison && !/frigo/i.test(m.liaison);
+    if (f.precharge === (hy ? '0' : m.precharge)) f.precharge = '';
+    if (f.gpm === (hy ? '0' : m.gpm)) f.gpm = '';
+    if (hy && f.longueur === '0') f.longueur = '';
+    if (f.chargeUsine === m.charge) f.chargeUsine = '';
+  }
   f.modele = ''; f._modeleAutre = false;
 }
 function brandsFor(type) {
@@ -274,7 +282,7 @@ var A = {
     var f = S.form, fl = formFluid(f);
     var data = {
       id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville,
-      marque: brandMatch(f.marque) || f.marque, modele: f.modele, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
+      marque: brandMatch(f.marque) || f.marque, modele: f.modele, chargeUsine: f.chargeUsine, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
       fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires
     };
     run(call('saveChantier', data), f.id ? 'Fiche chantier enregistrée.' : 'Chantier créé.').then(function (c) {
@@ -400,7 +408,8 @@ var V = {
   chantier: function () {
     var c = S.cur;
     var rows = [['Type', c.type], ['Marque UE', c.marque], ['Modèle UE', c.modele], ['N° série UE', c.serieUE], ['N° série UI', c.serieUI],
-      ['Fluide', c.fluide], ['GWP', c.gwp], ['Liaisons', c.longueur ? c.longueur + ' m' : ''], ['Précharge / charge', (c.precharge || '?') + ' m / ' + (c.gpm || '?') + ' g/m'],
+      ['Fluide', c.fluide], ['GWP', c.gwp], ['Charge usine', c.chargeUsine ? c.chargeUsine + ' kg' : ''], ['Liaisons', c.longueur ? c.longueur + ' m' : ''],
+      ['Précharge / charge suppl.', (c.precharge || '?') + ' m / ' + (c.gpm || '?') + ' g/m'],
       ['Mise en service', c.dateMes || 'pas encore']];
     return msgBox() + '<div class="card" style="gap:6px"><div style="font-size:18px;font-weight:700">' + esc(c.client) + '</div>' +
       '<div class="note">' + esc([c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Adresse à compléter') + '</div>' +
@@ -413,6 +422,7 @@ var V = {
 
   chantierForm: function () {
     var f = S.form, fl = formFluid(f), info = fluidInfo(fl);
+    var mSel = findMachine(f.modele), hydro = !!(mSel && mSel.liaison && !/frigo/i.test(mSel.liaison));
     var gwpHint = f.gwpManuel ? 'Valeur saisie à la main' : (info ? 'Rempli automatiquement pour ' + fl + ' : ' + info.gwp + ' · modifiable' : (fl ? 'Fluide inconnu : saisis le GWP à la main' : ''));
     var opts = ['', 'R32', 'R410A', 'R454C', 'Autre'].map(function (v) { return '<option value="' + v + '"' + (f.fluideChoix === v ? ' selected' : '') + '>' + (v === '' ? 'Non renseigné' : v === 'Autre' ? 'Autre…' : v) + '</option>'; }).join('');
     var lu = S.form._lu;
@@ -430,13 +440,14 @@ var V = {
       field('N° projet', 'form.projet') + '</div>' +
       '<div class="sec">Unité extérieure</div><div class="card">' +
       ueFields(f) +
-      '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques</div><div class="g3">' +
-      field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
-      '<div class="sec">Installation</div><div class="card">' +
       '<label>Fluide de la machine<select data-bind="form.fluideChoix" data-rerender="1">' + opts + '</select></label>' +
       (f.fluideChoix === 'Autre' ? field('Nom du fluide', 'form.fluideAutre', { ph: 'Ex. R407C' }) : '') +
       (f.fluideChoix === 'Autre' && fl && !info ? '<div class="note">Ce fluide est-il inflammable (A2L ou A3) ?</div>' + chips([['oui', 'Inflammable'], ['non', 'Non inflammable']], f.inflam, 'setInflam') : '') +
       '<label>GWP du fluide<input type="text" inputmode="numeric" data-bind="form.gwpManuel" value="' + esc(f.gwpManuel) + '" placeholder="' + esc(info ? String(info.gwp) : 'À saisir') + '"><span style="font-size:13px">' + esc(gwpHint) + '</span></label>' +
+      field('Charge usine (kg)', 'form.chargeUsine', { mode: 'decimal', ph: 'Inscrite sur la plaque' }) +
+      '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques' + (hydro ? ' : aucune, machine à liaisons hydrauliques (monobloc)' : '') + '</div><div class="g3">' +
+      field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge suppl. (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
+      '<div class="sec">Commentaires</div><div class="card">' +
       '<label>Commentaires<textarea rows="3" data-bind="form.commentaires">' + esc(f.commentaires) + '</textarea></label></div>' +
       '<button class="btn" data-act="saveChantier"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le chantier') + '</button>';
   },

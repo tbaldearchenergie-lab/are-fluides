@@ -417,7 +417,7 @@ var CH_FIELDS = {
   id: 'ID', projet: 'N° projet', dateMes: 'Date MES', type: 'Type d’installation', prenom: 'Prénom', nom: 'Nom',
   adresse: 'Adresse', cp: 'Code postal', ville: 'Ville', tel: 'Téléphone', email: 'E-mail',
   marque: 'Marque UE', modele: 'Modèle UE', serieUE: 'N° série UE', serieUI: 'N° série UI', fluide: 'Fluide',
-  inflam: 'Inflammable (si fluide inconnu)', longueur: 'Longueur liaisons (m)', precharge: 'Précharge (m)', gpm: 'Charge (g/m)',
+  inflam: 'Inflammable (si fluide inconnu)', longueur: 'Longueur liaisons (m)', precharge: 'Précharge (m)', gpm: 'Charge (g/m)', chargeUsine: 'Charge usine (kg)',
   commentaires: 'Commentaires'
 };
 
@@ -456,6 +456,7 @@ function saveChantier_(d) {
   if (d.dateMes && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(d.dateMes).trim())) throw new Error('Date de mise en service au format jj/mm/aaaa.');
   var lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
+    ensureColumn_(SH.chantiers, 'Charge usine (kg)');
     var t = readTable_(SH.chantiers);
     var row = d.id ? t.rows.filter(function (r) { return r['ID'] === d.id; })[0] : null;
     if (d.id && !row) throw new Error('Chantier introuvable.');
@@ -479,7 +480,14 @@ function saveChantier_(d) {
 /* ------------------------------------------------------------------ Fluides */
 
 function listFluides_() {
-  return readTable_(SH.fluides).rows.map(function (f) {
+  var t = readTable_(SH.fluides);
+  // R290 (propane) des PAC monoblocs : ajouté automatiquement s'il manque (GWP 0,02 d'après le catalogue Panasonic)
+  if (!t.rows.some(function (f) { return String(f['Code']).toUpperCase() === 'R290'; })) {
+    writeRow_(t, { 'Code': 'R290', 'GWP': 0.02, 'Classe de sécurité': 'A3', 'Inflammable': 'oui',
+      'Rubrique déchets (case 12)': '16 05 04* – Gaz en récipients à pression contenant des substances dangereuses', 'Mention ADR (case 12)': 'UN 1978, Propane, 2.1' });
+    t = readTable_(SH.fluides);
+  }
+  return t.rows.map(function (f) {
     return { code: String(f['Code']), gwp: Number(f['GWP']) || 0, classe: f['Classe de sécurité'], inflammable: String(f['Inflammable']).toLowerCase() === 'oui' };
   });
 }
