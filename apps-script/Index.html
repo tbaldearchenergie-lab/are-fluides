@@ -184,8 +184,23 @@ function brands() {
   S.machines.forEach(function (m) { if (m.marque && out.indexOf(m.marque) < 0) out.push(m.marque); });
   return out.sort();
 }
+/** Modèle retiré : on efface aussi la précharge et le g/m qu'il avait remplis. */
+function dropMachine(f) {
+  var m = findMachine(f.modele);
+  if (m) { if (f.precharge === m.precharge) f.precharge = ''; if (f.gpm === m.gpm) f.gpm = ''; }
+  f.modele = ''; f._modeleAutre = false;
+}
+function brandsFor(type) {
+  var out = [];
+  S.machines.forEach(function (m) { if (m.marque && (!type || m.type === type) && out.indexOf(m.marque) < 0) out.push(m.marque); });
+  return out.sort();
+}
+function typeSelect(f) {
+  return '<label>Type d’installation<select data-bind="form.type">' + '<option value=""' + (!f.type ? ' selected' : '') + '>Non renseigné</option>' +
+    TYPES.map(function (v) { return '<option' + (f.type === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('') + '</select></label>';
+}
 function brandMatch(b) { b = String(b || '').trim().toLowerCase(); return b ? brands().filter(function (x) { return x.toLowerCase() === b; })[0] || '' : ''; }
-/** Unité extérieure : d'abord la marque, puis le modèle de cette marque ; le choix du modèle remplit le reste. */
+/** Unité extérieure : type d'installation, puis marque, puis modèle (listes filtrées) ; le choix du modèle remplit le reste. */
 function suggBox(f) {
   if (!f._sugg || !f._sugg.length) return '';
   return '<div class="msg" style="margin:0;display:flex;flex-direction:column;gap:8px"><b>Modèles proposés d’après la feuille de relevé</b>' +
@@ -197,18 +212,21 @@ function suggBox(f) {
     }).join('') + '</div>';
 }
 function ueFields(f) {
-  if (!S.machines.length) return field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) + field('Modèle', 'form.modele', { ph: 'Ex. ERGA04EV' });
+  if (!S.machines.length) return typeSelect(f) + field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) + field('Modèle', 'form.modele', { ph: 'Ex. ERGA04EV' });
   var top = suggBox(f);
   var bm = f._marqueAutre ? '' : brandMatch(f.marque);
   var bSel = f._marqueAutre || (f.marque && !bm) ? 'Autre' : bm;
-  var html = top + '<label>Marque<select data-bind="form._marqueSel">' +
-    ['<option value="">Choisir la marque…</option>'].concat(brands().map(function (b) { return '<option' + (b === bSel ? ' selected' : '') + '>' + esc(b) + '</option>'; }))
+  var bl = brandsFor(f.type); if (bm && bl.indexOf(bm) < 0) bl.push(bm);
+  var html = top + typeSelect(f) + '<label>Marque<select data-bind="form._marqueSel">' +
+    ['<option value="">Choisir la marque…</option>'].concat(bl.map(function (b) { return '<option' + (b === bSel ? ' selected' : '') + '>' + esc(b) + '</option>'; }))
       .concat('<option value="Autre"' + (bSel === 'Autre' ? ' selected' : '') + '>Autre marque…</option>').join('') + '</select></label>';
   if (bSel === 'Autre') return html + field('Nom de la marque', 'form.marque', { ph: 'Ex. Atlantic' }) + field('Modèle', 'form.modele', { ph: 'Référence de l’unité extérieure' });
   if (!bm) return html;
   var mm = findMachine(f.modele), mSel = f._modeleAutre || (f.modele && !(mm && mm.marque === bm)) ? 'Autre' : (mm ? mm.modele : '');
   var groups = {}, order = [];
-  S.machines.forEach(function (m) { if (m.marque !== bm) return; var g = m.appareil || m.gamme || 'Autres'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(m); });
+  var pourType = S.machines.filter(function (m) { return m.marque === bm && (!f.type || m.type === f.type); });
+  if (!pourType.length) pourType = S.machines.filter(function (m) { return m.marque === bm; });
+  pourType.forEach(function (m) { var g = m.appareil || m.gamme || 'Autres'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(m); });
   html += '<label>Modèle<select data-bind="form._modeleSel"><option value="">Choisir le modèle…</option>' +
     order.map(function (g) {
       return '<optgroup label="' + esc(g) + '">' + groups[g].map(function (m) { return '<option value="' + esc(m.modele) + '"' + (m.modele === mSel ? ' selected' : '') + '>' + esc(m.modele + (m.gamme ? ' – ' + m.gamme : '')) + '</option>'; }).join('') + '</optgroup>';
@@ -397,7 +415,6 @@ var V = {
     var f = S.form, fl = formFluid(f), info = fluidInfo(fl);
     var gwpHint = f.gwpManuel ? 'Valeur saisie à la main' : (info ? 'Rempli automatiquement pour ' + fl + ' : ' + info.gwp + ' · modifiable' : (fl ? 'Fluide inconnu : saisis le GWP à la main' : ''));
     var opts = ['', 'R32', 'R410A', 'R454C', 'Autre'].map(function (v) { return '<option value="' + v + '"' + (f.fluideChoix === v ? ' selected' : '') + '>' + (v === '' ? 'Non renseigné' : v === 'Autre' ? 'Autre…' : v) + '</option>'; }).join('');
-    var types = '<option value=""' + (!f.type ? ' selected' : '') + '>Non renseigné</option>' + TYPES.map(function (v) { return '<option' + (f.type === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
     var lu = S.form._lu;
     var reader = S.reading
       ? '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><div class="spin" style="margin:0;flex:0 0 auto"></div><div><b>Lecture de la feuille…</b><div class="note">10 à 30 secondes, garde l’appli ouverte.</div></div></div>'
@@ -416,7 +433,6 @@ var V = {
       '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques</div><div class="g3">' +
       field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
       '<div class="sec">Installation</div><div class="card">' +
-      '<label>Type d’installation<select data-bind="form.type">' + types + '</select></label>' +
       '<label>Fluide de la machine<select data-bind="form.fluideChoix" data-rerender="1">' + opts + '</select></label>' +
       (f.fluideChoix === 'Autre' ? field('Nom du fluide', 'form.fluideAutre', { ph: 'Ex. R407C' }) : '') +
       (f.fluideChoix === 'Autre' && fl && !info ? '<div class="note">Ce fluide est-il inflammable (A2L ou A3) ?</div>' + chips([['oui', 'Inflammable'], ['non', 'Non inflammable']], f.inflam, 'setInflam') : '') +
@@ -567,10 +583,16 @@ document.addEventListener('change', function (e) {
   if (!p) return;
   if (el.type === 'checkbox') { setPath(p, el.checked); return; }
   setPath(p, el.value);
+  if (p === 'form.type') {
+    var ft = S.form, cm = findMachine(ft.modele);
+    if (cm && el.value && cm.type && cm.type !== el.value) dropMachine(ft);
+    if (el.value && brandMatch(ft.marque) && brandsFor(el.value).indexOf(brandMatch(ft.marque)) < 0) { dropMachine(ft); ft.marque = ''; }
+    render(); return;
+  }
   if (p === 'form._marqueSel') {
     var f = S.form, b = el.value;
+    var cur = findMachine(f.modele); if (!cur || cur.marque !== b) dropMachine(f);
     f._marqueAutre = b === 'Autre'; f.marque = b === 'Autre' ? '' : b; f._modeleAutre = false;
-    var cur = findMachine(f.modele); if (!cur || cur.marque !== f.marque) f.modele = '';
     render(); return;
   }
   if (p === 'form._modeleSel') {
