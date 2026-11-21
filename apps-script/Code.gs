@@ -34,7 +34,8 @@ function api(req) {
       me: function () { return user; },
       listChantiers: listChantiers_,
       getChantier: function (d) { return getChantier_(d.id); },
-      saveChantier: function (d) { return saveChantier_(d); },
+      saveChantier: function (d) { return saveChantier_(d, user); },
+      deleteChantier: function (d) { return deleteChantier_(d, user); },
       listFluides: listFluides_,
       listMachines: listMachines_,
       extractReleve: function (d) { return extractReleve_(d); },
@@ -349,7 +350,7 @@ function auth_(token) {
   var op = readTable_(SH.ops).rows.map(operatorPublic_).filter(function (o) { return o.id === s.id; })[0];
   if (!op || !op.actif || op.email.toLowerCase() !== s.email.toLowerCase()) throw new Error('SESSION');
   var cut = Number(PropertiesService.getScriptProperties().getProperty('cut_' + op.id) || 0);
-  if (cut && (s.at || 0) < cut) { CacheService.getScriptCache().remove('s_' + token); throw new Error('SESSION'); }
+  if (cut && (s.at || 0) <= cut) { CacheService.getScriptCache().remove('s_' + token); throw new Error('SESSION'); }
   return op;
 }
 
@@ -434,7 +435,8 @@ function chantierFromRow_(r, gwps) {
   var g = r['GWP'];
   // Ancienne formule en erreur (#ERROR!, #N/A…) ou vide : on reprend la valeur de l'onglet Fluides
   if (g === '' || g === 'saisir' || /^#/.test(String(g)) || !isFinite(Number(g))) g = (gwps || gwpMap_())[normFluide_(o.fluide)] || '';
-  o.gwp = g === '' ? '' : String(g);
+  o.gwp = g === '' ? '' : String(g).replace('.', ',');
+  o.creePar = String(r['Créé par'] || '');
   o.client = (o.prenom ? o.prenom + ' ' : '') + o.nom;
   o.misEnService = !!o.dateMes;
   return o;
@@ -451,18 +453,22 @@ function getChantier_(id) {
   return chantierFromRow_(r);
 }
 
-function saveChantier_(d) {
+function saveChantier_(d, user) {
   if (!String(d.nom || '').trim()) throw new Error('Le nom du client est obligatoire.');
   if (d.dateMes && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(d.dateMes).trim())) throw new Error('Date de mise en service au format jj/mm/aaaa.');
   var lock = LockService.getScriptLock(); lock.waitLock(10000);
   try {
     ensureColumn_(SH.chantiers, 'Charge usine (kg)');
+    ensureColumn_(SH.chantiers, 'Créé par');
     var t = readTable_(SH.chantiers);
     var row = d.id ? t.rows.filter(function (r) { return r['ID'] === d.id; })[0] : null;
     if (d.id && !row) throw new Error('Chantier introuvable.');
     var rec = {};
     Object.keys(CH_FIELDS).forEach(function (k) { if (k !== 'id' && d[k] !== undefined) rec[CH_FIELDS[k]] = d[k]; });
-    if (!row) rec['ID'] = nextId_(t.rows, 'C', 'ID');
+    if (!row) {
+      rec['ID'] = nextId_(t.rows.concat(corbeille_().rows), 'C', 'ID');   // jamais réutiliser l'ID d'un chantier supprimé
+      if (user) rec['Créé par'] = user.id;
+    }
     var r = writeRow_(t, rec, row ? row._row : null);
     // GWP : valeur saisie à la main si fournie, sinon valeur de l'onglet Fluides (écrite en nombre, sans formule)
     var gwpCol = t.headers.indexOf('GWP') + 1;
@@ -474,6 +480,43 @@ function saveChantier_(d) {
     SpreadsheetApp.flush();
     var id = row ? d.id : rec['ID'];
     return getChantier_(id);
+  } finally { lock.releaseLock(); }
+}
+
+var CORBEILLE = '_Chantiers supprimés';
+
+/** Onglet caché qui garde une copie de chaque chantier supprimé (avec la date et l'auteur). */
+function corbeille_() {
+  var sh = ss_().getSheetByName(CORBEILLE);
+  if (!sh) {
+    var src = sheet_(SH.chantiers);
+    var h = src.getRange(1, 1, 1, src.getLastColumn()).getValues()[0].concat(['Supprimé le', 'Supprimé par']);
+    sh = ss_().insertSheet(CORBEILLE);
+    sh.getRange(1, 1, 1, h.length).setValues([h]);
+    sh.hideSheet();
+  }
+  return readTable_(CORBEILLE);
+}
+
+/** Supprime une fiche chantier : seulement sans mise en service ; un opérateur ne supprime que les siennes. */
+function deleteChantier_(d, user) {
+  var lock = LockService.getScriptLock(); lock.waitLock(10000);
+  try {
+    var t = readTable_(SH.chantiers);
+    var row = t.rows.filter(function (r) { return r['ID'] === d.id; })[0];
+    if (!row) throw new Error('Chantier introuvable.');
+    if (String(row['Date MES'] || '').trim()) throw new Error('Ce chantier a une mise en service : il ne peut pas être supprimé.');
+    var mouv = [];
+    try { mouv = readTable_(SH.mouv).rows; } catch (e) { mouv = []; }
+    if (mouv.some(function (m) { return String(m['Chantier / Client'] || '').trim() === d.id; })) throw new Error('Ce chantier a des opérations sur le fluide : il ne peut pas être supprimé.');
+    if (user.role !== 'admin' && String(row['Créé par'] || '') !== user.id) throw new Error('Tu ne peux supprimer que les chantiers que tu as créés.');
+    var c = corbeille_();
+    var rec = {};
+    t.headers.forEach(function (h) { if (h) rec[h] = row[h]; });
+    rec['Supprimé le'] = new Date(); rec['Supprimé par'] = (user.prenom + ' ' + user.nom).trim() || user.email;
+    writeRow_(c, rec, null);
+    t.sh.deleteRow(row._row);
+    return true;
   } finally { lock.releaseLock(); }
 }
 

@@ -158,7 +158,7 @@ function formFromChantier(c) {
   f.fluideChoix = !c.fluide ? '' : (MAIN_FLUIDS.indexOf(c.fluide) >= 0 ? c.fluide : 'Autre');
   f.fluideAutre = f.fluideChoix === 'Autre' ? c.fluide : '';
   var auto = fluidInfo(c.fluide);
-  f.gwpManuel = (c.gwp && (!auto || String(auto.gwp) !== String(c.gwp))) ? c.gwp : '';
+  f.gwpManuel = (c.gwp && (!auto || String(auto.gwp) !== String(c.gwp).replace(',', '.'))) ? c.gwp : '';
   return f;
 }
 function normModele(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
@@ -282,7 +282,13 @@ var A = {
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
   newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
-  openChantier: function (id) { S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); },
+  openChantier: function (id) { S.confirmDelete = false; S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); },
+  deleteChantier: function () {
+    var id = S.cur.id; S.confirmDelete = false;
+    run(call('deleteChantier', { id: id }), 'Chantier supprimé.').then(function () {
+      S.chantiers = S.chantiers.filter(function (c) { return c.id !== id; }); S.cur = null; S.stack = []; S.screen = 'home'; render();
+    });
+  },
   editChantier: function () { S.form = formFromChantier(S.cur); go('chantierForm'); },
   saveChantier: function () {
     var f = S.form, fl = formFluid(f);
@@ -423,7 +429,7 @@ var V = {
       '<div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + esc(r[1] || '—') + '</span></div>'; }).join('') + '</div>' +
       (c.commentaires ? '<div class="card"><div class="note">' + esc(c.commentaires) + '</div></div>' : '') +
       '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' +
-      '<button class="btn" data-act="startMes">Démarrer la mise en service</button>';
+      '<button class="btn" data-act="startMes">Démarrer la mise en service</button>' + deleteBlock(c);
   },
 
   chantierForm: function () {
@@ -509,6 +515,13 @@ var V = {
   }
 };
 
+function canDeleteChantier(c) { return !!(c && S.user && !c.misEnService && (S.user.role === 'admin' || c.creePar === S.user.id)); }
+function deleteBlock(c) {
+  if (!canDeleteChantier(c)) return '';
+  return S.confirmDelete
+    ? '<div class="msg err">Supprimer la fiche chantier de ' + esc(c.client) + ' ? Elle disparaît de la liste (une copie est gardée dans le tableur).</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteChantier">Oui, supprimer</button></div>'
+    : '<button class="btn danger" data-act="askDelete">Supprimer ce chantier</button>';
+}
 var TITLES = { setup: 'Première connexion', login: 'Connexion', home: 'Accueil', chantier: 'Fiche chantier', profile: 'Mon profil', admin: 'Gestion des comptes', opForm: 'Compte opérateur', loading: 'Chargement' };
 
 function render() {
