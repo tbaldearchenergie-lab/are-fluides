@@ -68,6 +68,23 @@
   .spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:s 1s linear infinite;margin:40px auto}
   @keyframes s{to{transform:rotate(360deg)}}
   .hidden{display:none}
+  .steps{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
+  .steps .st{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .steps i{display:block;height:6px;border-radius:99px;background:#D5DCD7}
+  .steps .st.on i{background:var(--green)}
+  .steps span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .steps .cur span{color:var(--ink);font-weight:700}
+  .item.opt{border:2px solid transparent}
+  .item.opt.on{border-color:var(--green);background:var(--mint)}
+  .thumbs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .thumb{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:var(--line)}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .thumb button{position:absolute;top:4px;right:4px;width:32px;height:32px;border-radius:99px;border:0;background:rgba(20,32,26,.75);color:#fff;font-size:15px;cursor:pointer}
+  .sigwrap{position:relative;border:1.5px dashed var(--field);border-radius:12px;background:#FBFCFB;height:170px}
+  .sigwrap canvas{width:100%;height:100%;display:block;touch-action:none;border-radius:12px}
+  .sighint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);pointer-events:none;font-size:15px}
+  .manip{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+  .manip .chip{min-height:40px;padding:0 12px}
 </style>
 </head>
 <body>
@@ -135,6 +152,7 @@ function back() { S.screen = S.stack.pop() || 'home'; S.msg = null; render(); wi
 function fluidInfo(code) { for (var i = 0; i < S.fluides.length; i++) if (S.fluides[i].code === code) return S.fluides[i]; return null; }
 function genPassword() { var c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', s = ''; for (var i = 0; i < 10; i++) s += c.charAt(Math.floor(Math.random() * c.length)); return s; }
 var ICON = {
+  check: '<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
   eye: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeOff: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.6 10.6 0 0112 5c6.5 0 10 7 10 7a17.6 17.6 0 01-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 005.4-1.6"/><path d="M9.9 9.9a3 3 0 004.2 4.2"/></svg>',
   back: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
@@ -288,7 +306,7 @@ var A = {
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
   newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
-  openChantier: function (id) { S.confirmDelete = false; S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); },
+  openChantier: function (id) { S.confirmDelete = false; S.confirmMes = false; S.confirmManip = null; S.editMes = null; S.progress = null; S.ctx = null; S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); loadMes().catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
   deleteChantier: function () {
     var id = S.cur.id; S.confirmDelete = false;
     run(call('deleteChantier', { id: id }), 'Chantier supprimé.').then(function () {
@@ -304,14 +322,13 @@ var A = {
       fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires
     };
     run(call('saveChantier', data), f.id ? 'Fiche chantier enregistrée.' : 'Chantier créé.').then(function (c) {
-      S.cur = c; S.stack = ['home']; S.screen = 'chantier';
+      S.cur = c; S.stack = ['home']; S.screen = 'chantier'; S.ctx = null; loadMes().catch(function () {});
       call('listChantiers').then(function (l) { S.chantiers = l; });
       render();
     });
   },
   setType: function (v) { S.form.type = v; render(); },
   setInflam: function (v) { S.form.inflam = v; render(); },
-  startMes: function () { S.msg = { text: 'La mise en service arrive avec la livraison 2.' }; render(); },
   changePassword: function () {
     if (S.pwd.newPassword !== S.pwd.confirm) { S.msg = { err: true, text: 'Les deux nouveaux mots de passe ne sont pas identiques.' }; return render(); }
     run(call('changePassword', { oldPassword: S.pwd.oldPassword, newPassword: S.pwd.newPassword, remember: load('are_remember') }), 'Mot de passe modifié. Tes autres appareils ont été déconnectés.').then(function () { S.pwd = { oldPassword: '', newPassword: '', confirm: '' }; S.showPw = {}; render(); });
@@ -455,7 +472,7 @@ var V = {
       '<div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + esc(r[1] || '—') + '</span></div>'; }).join('') + '</div>' +
       (c.commentaires ? '<div class="card"><div class="note">' + esc(c.commentaires) + '</div></div>' : '') +
       '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' +
-      '<button class="btn" data-act="startMes">Démarrer la mise en service</button>' + deleteBlock(c);
+      viewChantierMes(c) + deleteBlock(c);
   },
 
   chantierForm: function () {
@@ -485,7 +502,7 @@ var V = {
       field('Charge usine (kg)', 'form.chargeUsine', { mode: 'decimal', ph: 'Inscrite sur la plaque' }) +
       '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques' + (hydro ? ' : aucune, machine à liaisons hydrauliques (monobloc)' : '') + '</div><div class="g3">' +
       field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge suppl. (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div>' +
-      longueurAlerte(f, mSel) + '</div>' +
+      '<div id="longAlert">' + longueurAlerte(f, mSel) + '</div></div>' +
       '<div class="sec">Commentaires</div><div class="card">' +
       '<label>Commentaires<textarea rows="3" data-bind="form.commentaires">' + esc(f.commentaires) + '</textarea></label></div>' +
       '<button class="btn" data-act="saveChantier"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le chantier') + '</button>';
@@ -568,7 +585,491 @@ function deleteBlock(c) {
     ? '<div class="msg err">Supprimer la fiche chantier de ' + esc(c.client) + ' ? Elle disparaît de la liste (une copie est gardée dans le tableur).</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteChantier">Oui, supprimer</button></div>'
     : '<button class="btn danger" data-act="askDelete">Supprimer ce chantier</button>';
 }
-var TITLES = { setup: 'Première connexion', login: 'Connexion', home: 'Accueil', chantier: 'Fiche chantier', profile: 'Mon profil', admin: 'Gestion des comptes', opForm: 'Compte opérateur', loading: 'Chargement' };
+var TITLES = { mes: 'Mise en service', mesDone: 'Mise en service', setup: 'Première connexion', login: 'Connexion', home: 'Accueil', chantier: 'Fiche chantier', profile: 'Mon profil', admin: 'Gestion des comptes', opForm: 'Compte opérateur', loading: 'Chargement' };
+
+/* ============================== Livraison 2 : mise en service ============================== */
+var PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+var MES_STEP_LABELS = { equip: 'Équipement', op: 'Opération', fluide: 'Fluide', etanch: 'Étanchéité', photos: 'Photos' };
+
+function isoToFr(iso) { var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; }
+function frToIso(fr) { var m = String(fr || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2) : ''; }
+function todayIso() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+function frNum(n, d) { return isFinite(n) ? n.toFixed(d === undefined ? 2 : d).replace('.', ',') : ''; }
+function numOrNaN(v) { if (v === '' || v === null || v === undefined) return NaN; var n = Number(String(v).replace(/\s/g, '').replace(',', '.')); return isFinite(n) ? n : NaN; }
+function b64ToBytes(b64) { var bin = atob(b64), out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+function loadPdfLib() {
+  if (window.PDFLib) return Promise.resolve(window.PDFLib);
+  return new Promise(function (resolve, reject) {
+    var s = document.createElement('script'); s.src = PDFLIB_URL;
+    s.onload = function () { window.PDFLib ? resolve(window.PDFLib) : reject(new Error('Outil PDF indisponible.')); };
+    s.onerror = function () { reject(new Error('Outil PDF indisponible : vérifie la connexion internet.')); };
+    document.head.appendChild(s);
+  });
+}
+function cerfaTemplateBytes() {
+  if (S.cerfaTpl) return Promise.resolve(S.cerfaTpl);
+  return call('cerfaTemplate').then(function (b64) { S.cerfaTpl = b64ToBytes(b64); return S.cerfaTpl; });
+}
+/* CERFA-FILL-START */
+/** Remplit le vrai CERFA 15497*04 (formulaire PDF) et pose la signature de l'opérateur. */
+function fillCerfaPdf(PDFLib, templateBytes, fields, signaturePng) {
+  return PDFLib.PDFDocument.load(templateBytes).then(function (doc) {
+    var form = doc.getForm();
+    Object.keys(fields.text).forEach(function (k) {
+      try { var tf = form.getTextField(k); tf.setText(String(fields.text[k] || '')); } catch (e) { /* champ absent */ }
+    });
+    (fields.checks || []).forEach(function (k) { try { form.getCheckBox(k).check(); } catch (e) { /* case absente */ } });
+    Object.keys(fields.radio || {}).forEach(function (k) {
+      try { var rg = form.getRadioGroup(k); var opts = rg.getOptions(); var v = fields.radio[k]; rg.select(opts.indexOf(v) >= 0 ? v : opts[opts.length - 1]); } catch (e) { /* groupe absent */ }
+    });
+    return doc.embedFont(PDFLib.StandardFonts.Helvetica).then(function (font) {
+      form.updateFieldAppearances(font);
+      form.flatten();
+      if (!signaturePng) return doc;
+      return doc.embedPng(signaturePng).then(function (img) {
+        var page = doc.getPages()[0], box = { x: 196, y: 44.5, w: 138, h: 19 };   // case « Date et signature » de l'opérateur, à droite de la date
+        var k = Math.min(box.w / img.width, box.h / img.height);
+        page.drawImage(img, { x: box.x, y: box.y, width: img.width * k, height: img.height * k });
+        return doc;
+      });
+    });
+  }).then(function (doc) { return doc.saveAsBase64(); });
+}
+/* CERFA-FILL-END */
+
+/** Fait le CERFA rempli et signé sur le téléphone, puis l'envoie dans le Drive. */
+function makeCerfa(cerfa, fields, sigB64) {
+  return Promise.all([loadPdfLib(), cerfaTemplateBytes()]).then(function (r) {
+    return fillCerfaPdf(r[0], r[1], fields, sigB64 ? b64ToBytes(sigB64) : null);
+  }).then(function (pdf) { return call('saveCerfa', { cerfa: cerfa, pdf: pdf }); });
+}
+
+/** Refait les CERFA (même numéro, signature gardée) puis le rapport : après une modification ou un échec. */
+function remakeDocs(cerfas) {
+  var i = 0, done = [];
+  var next = function () {
+    if (i >= cerfas.length) return Promise.resolve();
+    var no = cerfas[i++];
+    S.progress = 'CERFA ' + i + ' / ' + cerfas.length + '…'; render();
+    return call('cerfaData', { cerfa: no }).then(function (x) { return makeCerfa(no, x.fields, x.signature); }).then(function (f) { done.push(f); return next(); });
+  };
+  return next().then(function () { S.progress = 'Rapport d’installation…'; render(); return call('buildReport', { chantierId: S.cur.id }); })
+    .then(function () { S.progress = null; return loadMes(); });
+}
+
+function loadMes() {
+  if (!S.cur) return Promise.resolve();
+  var id = S.cur.id;
+  return call('mesContext', { chantierId: id }).then(function (ctx) {
+    if (!S.cur || S.cur.id !== id) return;
+    S.ctx = ctx; S.cur = ctx.chantier;
+    var i; for (i = 0; i < S.chantiers.length; i++) if (S.chantiers[i].id === id) S.chantiers[i] = ctx.chantier;
+    render();
+  });
+}
+
+function newMesState(addOnly) {
+  var ctx = S.ctx, c = ctx.chantier, mes = ctx.mes;
+  var dets = ctx.detecteurs.filter(function (x) { return x.ok; });
+  var d = {
+    date: todayIso(), serieUE: (mes && mes.serieUE) || c.serieUE || '', serieUI: (mes && mes.serieUI) || c.serieUI || '',
+    op: '', chargeUsine: c.chargeUsine || (ctx.machine && ctx.machine.charge) || '', vide: '', tenue: '',
+    bouteille: '', poidsAvant: '', poidsApres: '', distributeur: ctx.distributeurs.length === 1 ? ctx.distributeurs[0].id : '',
+    detecteur: dets.length === 1 ? dets[0].id : '', fuite: 'non', fuites: [{ loc: '', rep: 'realisee' }, { loc: '', rep: 'realisee' }, { loc: '', rep: 'realisee' }], observations: ''
+  };
+  var photos = {}; ctx.photoSlots.forEach(function (s) { photos[s] = []; });
+  return { step: 0, d: d, photos: photos, sig: null, add: !!addOnly, reading: null };
+}
+
+function mesSteps() {
+  var m = S.mes, s = ['equip', 'op'];
+  if (m.d.op !== 'mes') s.push('fluide', 'etanch');   // tant que l'opération n'est pas choisie, on montre les 5 étapes
+  s.push('photos');
+  return s;
+}
+
+/** Complément de charge d'après les liaisons du chantier. */
+function complement() {
+  var c = S.ctx.chantier, L = numOrNaN(c.longueur), P = numOrNaN(c.precharge), G = numOrNaN(c.gpm);
+  return isFinite(L) && isFinite(P) && isFinite(G) ? Math.max(0, L - P) * G / 1000 : NaN;
+}
+function mesQuantite() {
+  var d = S.mes.d, a = numOrNaN(d.poidsAvant), b = numOrNaN(d.poidsApres);
+  if (!isFinite(a) || !isFinite(b)) return NaN;
+  return d.op === 'ajout' ? a - b : b - a;
+}
+function bottlesFor(op) {
+  var fl = normModele(S.ctx.chantier.fluide);
+  return S.ctx.bouteilles.filter(function (b) {
+    if (!/d[ée]p[ôo]t/i.test(b.statut)) return false;
+    if (op === 'ajout') return /neuve/i.test(b.type) && (!b.fluide || normModele(b.fluide) === fl);
+    return /r[ée]cup|transfert/i.test(b.type) && (!b.fluide || normModele(b.fluide) === fl);
+  });
+}
+
+function mesCheckStep(key) {
+  var m = S.mes, d = m.d, c = S.ctx.chantier;
+  if (key === 'equip') {
+    if (!d.date) return 'Indique la date de l’intervention.';
+    if (d.date > todayIso()) return 'La date ne peut pas être dans le futur.';
+    if (!m.add && !String(d.serieUE).trim()) return 'Saisis le n° de série de l’unité extérieure (ou lis-le sur la photo de la plaque).';
+  }
+  if (key === 'op' && !d.op) return 'Choisis l’opération réalisée.';
+  if (key === 'fluide') {
+    if (d.op === 'relache' && !isFinite(numOrNaN(d.chargeUsine))) return 'Indique la charge usine de l’unité extérieure.';
+    if (d.op === 'ajout' || d.op === 'recup') {
+      if (!d.bouteille) return 'Choisis la bouteille utilisée.';
+      if (!isFinite(numOrNaN(d.poidsAvant)) || !isFinite(numOrNaN(d.poidsApres))) return 'Saisis les deux pesées.';
+      if (!(mesQuantite() > 0)) return d.op === 'ajout' ? 'La bouteille doit être plus légère après la charge.' : 'La bouteille doit être plus lourde après la récupération.';
+      if (d.op === 'recup' && !d.distributeur) return 'Choisis la destination du fluide récupéré (case 13).';
+    }
+  }
+  if (key === 'etanch') {
+    if (!d.detecteur) return 'Choisis le détecteur de fuite utilisé.';
+    if (d.fuite === 'oui' && !d.fuites.some(function (f) { return String(f.loc).trim(); })) return 'Indique où se trouve la fuite.';
+  }
+  if (key === 'photos') {
+    if (!m.add) {
+      var miss = S.ctx.photoRequired.filter(function (s) { return !m.photos[s].length; });
+      if (miss.length) return 'Photos obligatoires manquantes : ' + miss.join(', ') + '.';
+    }
+    if (!m.sig) return 'Signe dans le cadre avant de valider.';
+  }
+  return '';
+}
+
+/* ---------- Valeurs calculées, mises à jour pendant la saisie (sans redessiner l'écran) */
+function mesTeqTxt() { var cu = numOrNaN(S.mes.d.chargeUsine), gwp = S.ctx.fluide ? S.ctx.fluide.gwp : NaN; return isFinite(cu) && isFinite(gwp) ? frNum(cu * gwp / 1000, 3) + ' t' : '—'; }
+function mesQteTxt() { var q = mesQuantite(); return isFinite(q) ? frNum(q) + ' kg' : '—'; }
+function mesEcartHtml() {
+  var q = mesQuantite(), comp = complement();
+  if (S.mes.d.op !== 'ajout' || !isFinite(q) || !isFinite(comp) || !(comp > 0)) return '';
+  var ecart = Math.round((q - comp) * 1000);
+  return '<div class="msg ' + (Math.abs(ecart) <= Math.max(30, comp * 100) ? 'ok' : 'err') + '">' + (ecart === 0 ? 'Exactement le complément calculé.' : 'Écart de ' + (ecart > 0 ? '+' : '') + ecart + ' g avec le complément calculé.') + '</div>';
+}
+function updateLive(p) {
+  var set = function (id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; };
+  if (p === 'form.longueur') set('longAlert', longueurAlerte(S.form, findMachine(S.form.modele)));
+  if (p.indexOf('mes.d.') === 0 && S.mes) { set('mesTeq', esc(mesTeqTxt())); set('mesQte', esc(mesQteTxt())); set('mesEcart', mesEcartHtml()); }
+}
+
+/* ---------- Écrans */
+
+function viewChantierMes(c) {
+  var ctx = S.ctx && S.ctx.chantier.id === c.id ? S.ctx : null;
+  if (!ctx) return '<div class="spin" aria-label="Chargement de la mise en service" style="margin:12px auto"></div>';
+  var mes = ctx.mes;
+  if (S.progress) return '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><div class="spin" style="margin:0;flex:0 0 auto"></div><b>' + esc(S.progress) + '</b></div>';
+  if (!mes) return '<button class="btn" data-act="startMes">Démarrer la mise en service</button>';
+  var h = '<div class="sec">Mise en service</div><div class="card" style="gap:8px">' +
+    '<div><b>' + esc(mes.date) + '</b> · ' + esc(mes.operateur) + '</div>' +
+    '<div class="note">' + (mes.serieUE ? 'UE ' + esc(mes.serieUE) : '') + (mes.serieUI ? ' · UI ' + esc(mes.serieUI) : '') + (mes.photos ? ' · ' + mes.photos + ' photo' + (mes.photos > 1 ? 's' : '') : '') + '</div>';
+  if (!mes.manips.length) h += '<div class="note">Démarrage sans manipulation de fluide : pas de CERFA.</div>';
+  h += mes.manips.map(function (x) {
+    return '<div class="manip"><div><b>' + esc(x.label) + '</b><div class="note">' + esc(x.date) + ' · CERFA ' + esc(x.cerfa) + (x.quantite ? ' · ' + esc(frNum(numOrNaN(x.quantite))) + ' kg' : '') + '</div></div>' +
+      '<div class="chips" style="flex-wrap:nowrap">' + (x.lien ? '<a class="chip" style="display:flex;align-items:center;text-decoration:none;color:var(--ink)" target="_blank" rel="noopener" href="' + esc(x.lien) + '">PDF</a>' : '<span class="badge warn">PDF à refaire</span>') +
+      (mes.peutModifier ? (S.confirmManip === x.cerfa ? '<button class="chip" data-act="deleteManip" data-arg="' + esc(x.cerfa) + '" style="border-color:var(--warn);color:var(--warn)">Confirmer</button>' : '<button class="chip" data-act="askDeleteManip" data-arg="' + esc(x.cerfa) + '" aria-label="Supprimer la fiche ' + esc(x.cerfa) + '">✕</button>') : '') + '</div></div>';
+  }).join('');
+  if (mes.rapport) h += '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(mes.rapport) + '">Rapport d’installation (PDF)</a>';
+  h += '</div>';
+  if (mes.peutModifier) {
+    var missing = mes.manips.filter(function (x) { return !x.lien; }).length || !mes.rapport;
+    h += '<button class="btn" data-act="addManip">Ajouter une manipulation</button>';
+    if (missing) h += '<button class="btn out" data-act="remakeDocs">Refaire les documents (CERFA et rapport)</button>';
+    if (S.editMes) {
+      h += '<div class="card"><b>Modifier la mise en service</b>' +
+        '<label>Date de l’intervention<input type="date" max="' + todayIso() + '" data-bind="editMes.date" value="' + esc(S.editMes.date) + '"></label>' +
+        field('N° de série UE', 'editMes.serieUE') + field('N° de série UI', 'editMes.serieUI') +
+        '<div class="note">Les CERFA gardent leur numéro : ils sont refaits avec la nouvelle date et la signature enregistrée.</div>' +
+        '<div class="g2"><button class="btn out" data-act="cancelEditMes">Annuler</button><button class="btn" data-act="saveEditMes">Enregistrer</button></div></div>';
+    } else h += '<button class="btn out" data-act="editMes">Modifier la date ou les n° de série</button>';
+    h += S.confirmMes
+      ? '<div class="msg err">Supprimer la mise en service et ses ' + mes.manips.length + ' fiche(s) CERFA ? Les lignes sont retirées du registre (une copie est gardée dans le tableur) et les pesées des bouteilles sont remises.</div><div class="g2"><button class="btn out" data-act="cancelDeleteMes">Annuler</button><button class="btn danger" data-act="deleteMes">Oui, supprimer</button></div>'
+      : '<button class="btn danger" data-act="askDeleteMes">Supprimer la mise en service</button>';
+  } else h += '<div class="note" style="text-align:center">Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la modifier.</div>';
+  return h;
+}
+
+function photoBlock(slot, req) {
+  var list = S.mes.photos[slot];
+  return '<div class="card" style="gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>' + esc(slot) + '</b>' +
+    (req ? '<span class="badge ' + (list.length ? '' : 'warn') + '">' + (list.length ? 'OK' : 'Obligatoire') + '</span>' : '<span class="badge grey">Facultatif</span>') + '</div>' +
+    (list.length ? '<div class="thumbs">' + list.map(function (p, i) {
+      return '<div class="thumb"><img alt="' + esc(slot) + ' ' + (i + 1) + '" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removePhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>';
+    }).join('') + '</div>' : '') +
+    '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + (list.length ? 'Ajouter une photo' : 'Prendre une photo') + '</button></div>';
+}
+
+V.mes = function () {
+  var m = S.mes, ctx = S.ctx, c = ctx.chantier, d = m.d, steps = mesSteps(), key = steps[m.step];
+  if (m.saving) return '<div class="card center" style="padding:40px 16px"><div class="spin" style="margin:0 auto"></div><b>' + esc(m.saving) + '</b><div class="note">Garde l’appli ouverte jusqu’à la fin.</div></div>';
+  var h = '<div class="steps">' + steps.map(function (s, i) {
+    return '<div class="st' + (i <= m.step ? ' on' : '') + (i === m.step ? ' cur' : '') + '"><i></i><span>' + MES_STEP_LABELS[s] + '</span></div>';
+  }).join('') + '</div>' + msgBox();
+  h += '<div class="note"><b style="color:var(--ink)">' + esc(c.client) + '</b> · ' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'machine à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</div>';
+
+  if (key === 'equip') {
+    h += '<div class="card"><label>Date de l’intervention<input type="date" max="' + todayIso() + '" data-bind="mes.d.date" value="' + esc(d.date) + '"></label>' +
+      '<div class="note">Par défaut aujourd’hui. Change-la si tu saisis une intervention faite un autre jour.</div></div>' +
+      '<div class="sec">Numéros de série</div>';
+    ['UE', 'UI'].forEach(function (w) {
+      var slot = w === 'UE' ? 'Plaque signalétique UE' : 'Plaque signalétique UI';
+      h += '<div class="card">' + field('Unité ' + (w === 'UE' ? 'extérieure' : 'intérieure') + (w === 'UE' && !m.add ? ' *' : ''), 'mes.d.serie' + w, { ph: 'N° de série sur la plaque' }) +
+        (m.reading === w ? '<div class="note" style="display:flex;align-items:center;gap:10px"><span class="spin" style="width:20px;height:20px;margin:0"></span>Lecture de la plaque…</div>' :
+          '<button type="button" class="btn out" style="min-height:46px" data-act="readPlate" data-arg="' + w + '">' + ICON.camera + 'Lire sur la photo de la plaque</button>') +
+        (m.photos[slot].length ? '<div class="note">Photo de la plaque gardée pour le rapport (' + m.photos[slot].length + ').</div>' : '') + '</div>';
+    });
+    h += '<div class="note">La photo de la plaque est lue automatiquement et rangée avec les photos du rapport. Vérifie toujours le numéro.</div>';
+  }
+
+  if (key === 'op') {
+    h += '<div class="sec">Quelle opération as-tu réalisée ?</div>' + Object.keys(ctx.ops).filter(function (k) { return !(m.add && k === 'mes'); }).map(function (k) {
+      var desc = { mes: 'La machine démarre, aucun fluide n’est manipulé. Pas de CERFA.', relache: 'Le fluide de l’unité extérieure est relâché dans les liaisons.', ajout: 'Du fluide neuf est ajouté depuis une bouteille.', recup: 'Le fluide est récupéré dans une bouteille de récupération.' }[k];
+      return '<button type="button" class="item opt' + (d.op === k ? ' on' : '') + '" data-act="setOp" data-arg="' + k + '"><b style="font-size:16px">' + esc(ctx.ops[k]) + '</b><span class="note">' + desc + '</span></button>';
+    }).join('') + '<div class="note">Chaque manipulation de fluide donne son propre CERFA. Tu pourras en ajouter une autre à la fin.</div>';
+  }
+
+  if (key === 'fluide') {
+    var comp = complement(), q = mesQuantite();
+    h += '<div class="sec">' + esc(ctx.ops[d.op]) + '</div>';
+    if (d.op === 'relache') {
+      var gwp = ctx.fluide ? ctx.fluide.gwp : NaN;
+      h += '<div class="card"><b>Tirage au vide</b><div class="g2">' + field('Vide atteint (microns)', 'mes.d.vide', { mode: 'numeric' }) + field('Tenue du vide (min)', 'mes.d.tenue', { mode: 'numeric' }) + '</div>' +
+        (ctx.pompe ? '<div class="note">Pompe à vide ' + esc(ctx.pompe.label) + '.</div>' : '') + '</div>' +
+        '<div class="card">' + field('Charge usine de l’unité extérieure (kg)', 'mes.d.chargeUsine', { mode: 'decimal' }) +
+        '<div class="rows" style="padding:0 4px"><div class="row"><span>Liaisons / précharge</span><span>' + esc((c.longueur || '?') + ' m / ' + (c.precharge || '?') + ' m') + '</span></div>' +
+        '<div class="row"><span>Équivalent CO₂' + (isFinite(gwp) ? ' (GWP ' + esc(String(gwp).replace('.', ',')) + ')' : '') + '</span><span id="mesTeq">' + mesTeqTxt() + '</span></div></div>' +
+        (comp > 0 ? '<div class="msg err">Les liaisons dépassent la précharge : il faudra environ ' + frNum(comp) + ' kg en plus. Ajoute ensuite une manipulation « Ajout de charge ».</div>' : '') + '</div>';
+    } else {
+      var bl = bottlesFor(d.op), cur = S.ctx.bouteilles.filter(function (b) { return b.ref === d.bouteille; })[0];
+      if (d.op === 'ajout') h += '<div class="rows"><div class="row"><span>Complément calculé (' + esc((c.longueur || '?') + ' m − ' + (c.precharge || '?') + ' m × ' + (c.gpm || '?') + ' g/m') + ')</span><span>' + (isFinite(comp) ? frNum(comp) + ' kg' : '—') + '</span></div></div>';
+      h += '<div class="card"><label>' + (d.op === 'ajout' ? 'Bouteille de fluide neuf' : 'Bouteille de récupération') + '<select data-bind="mes.d.bouteille" data-rerender="1"><option value="">Choisir la bouteille…</option>' +
+        bl.map(function (b) { return '<option value="' + esc(b.ref) + '"' + (b.ref === d.bouteille ? ' selected' : '') + '>' + esc(b.ref + (b.fluide ? ' · ' + b.fluide : '') + (b.reste ? ' · reste ' + b.reste + ' kg' : '')) + '</option>'; }).join('') + '</select></label>' +
+        (!bl.length ? '<div class="msg err">Aucune bouteille ' + (d.op === 'ajout' ? 'neuve de ' + esc(c.fluide || 'ce fluide') : 'de récupération') + ' au dépôt dans l’onglet Bouteilles.</div>' : '') +
+        (cur && cur.pesee ? '<div class="note">Dernière pesée enregistrée : ' + esc(cur.pesee) + ' kg.</div>' : '') +
+        '<div class="g2">' + field('Pesée avant (kg)', 'mes.d.poidsAvant', { mode: 'decimal' }) + field('Pesée après (kg)', 'mes.d.poidsApres', { mode: 'decimal' }) + '</div>' +
+        '<div class="rows" style="padding:0 4px"><div class="row"><span>Quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + '</span><span id="mesQte">' + mesQteTxt() + '</span></div></div>' +
+        '<div id="mesEcart">' + mesEcartHtml() + '</div></div>';
+      if (d.op === 'recup') {
+        var inflam = ctx.fluide ? ctx.fluide.inflammable : String(c.inflam).toLowerCase() === 'oui';
+        h += '<div class="rows"><div class="row"><span>[12] Rubrique déchets (automatique)</span><span>' + (inflam ? '16 05 04* · UN 3161' : '14 06 01* · UN 1078') + '</span></div></div>' +
+          '<div class="card"><label>[13] Destination prévue du fluide récupéré<select data-bind="mes.d.distributeur"><option value="">Choisir…</option>' +
+          ctx.distributeurs.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === d.distributeur ? ' selected' : '') + '>' + esc(x.nom + (x.siret ? ' · SIRET ' + x.siret : '')) + '</option>'; }).join('') + '</select></label></div>';
+      }
+    }
+  }
+
+  if (key === 'etanch') {
+    var dl = ctx.detecteurs;
+    h += '<div class="sec">Contrôle d’étanchéité</div><div class="rows"><div class="row"><span>Opérateur</span><span>' + esc(ctx.operateur.nom) + (ctx.operateur.attestation ? ' · att. ' + esc(ctx.operateur.attestation) : '') + '</span></div></div>' +
+      '<div class="card"><label>Détecteur de fuite utilisé<select data-bind="mes.d.detecteur"><option value="">Choisir…</option>' +
+      dl.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === d.detecteur ? ' selected' : '') + (x.ok ? '' : ' disabled') + '>' + esc(x.label + (x.ok ? ' · contrôlé le ' + x.dernierControle : ' · contrôle dépassé')) + '</option>'; }).join('') + '</select></label>' +
+      (dl.some(function (x) { return !x.ok; }) ? '<div class="note">Un détecteur dont le contrôle annuel est dépassé ne peut pas être choisi.</div>' : '') +
+      '<div class="note">Fuite constatée ?</div>' + chips([['non', 'Non'], ['oui', 'Oui']], d.fuite, 'setFuite') + '</div>';
+    if (d.fuite === 'oui') {
+      h += '<div class="card"><div class="note">Jusqu’à 3 fuites, comme sur le CERFA (case 10). Laisse vides celles qui ne servent pas.</div>' + d.fuites.map(function (f, i) {
+        return field('Fuite ' + (i + 1) + ' : localisation', 'mes.d.fuites.' + i + '.loc', { ph: i === 0 ? 'Ex. raccord flare de l’UE' : '' }) + chips([['realisee', 'Réparation réalisée'], ['afaire', 'Réparation à faire']], f.rep, 'setRep' + i);
+      }).join('') + '</div>';
+    }
+    h += '<div class="card"><label>Observations (facultatif)<textarea rows="3" data-bind="mes.d.observations">' + esc(d.observations) + '</textarea></label></div>';
+  }
+
+  if (key === 'photos') {
+    h += '<div class="sec">Photos du rapport</div>' + ctx.photoSlots.map(function (s) { return photoBlock(s, !m.add && ctx.photoRequired.indexOf(s) >= 0); }).join('') +
+      '<div class="sec">Signature</div><div class="card"><div class="sigwrap"><canvas id="sigCanvas" aria-label="Zone de signature"></canvas>' + (m.sig ? '' : '<span class="sighint">Signe ici avec le doigt</span>') + '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span class="note">' + esc(ctx.operateur.nom) + (ctx.operateur.attestation ? ' · attestation ' + esc(ctx.operateur.attestation) : '') + '</span><button type="button" class="chip" data-act="clearSig">Effacer</button></div>' +
+      '<div class="note">' + (d.op === 'mes' ? 'La signature figure sur le rapport d’installation.' : 'La signature est posée sur le CERFA, dans la case « Date et signature » de l’opérateur.') + '</div></div>';
+  }
+
+  var last = m.step === steps.length - 1;
+  h += '<div class="g2" style="margin-top:4px">' + (m.step > 0 ? '<button class="btn out" data-act="mesPrev">Retour</button>' : '<span></span>') +
+    '<button class="btn" data-act="' + (last ? 'mesValidate' : 'mesNext') + '">' + (last ? (m.add ? 'Valider la manipulation' : 'Valider la mise en service') : 'Continuer') + '</button></div>' +
+    '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden"><input type="file" id="plateInput" accept="image/*" capture="environment" class="hidden">';
+  return h;
+};
+
+V.mesDone = function () {
+  var r = S.mesResult || {}, mes = S.ctx && S.ctx.mes;
+  var h = '<div class="card center" style="padding:28px 16px;gap:8px"><div class="logo" style="width:64px;height:64px;background:var(--green);color:#fff">' + ICON.check + '</div>' +
+    '<div style="font-size:20px;font-weight:700">' + (r.add ? 'Manipulation enregistrée' : 'Mise en service enregistrée') + '</div>' +
+    '<div class="note">' + esc(S.cur.client) + (r.cerfa ? ' · CERFA ' + esc(r.cerfa) : ' · sans manipulation de fluide') + '</div></div>' + msgBox();
+  h += '<div class="sec">Documents</div><div class="card" style="gap:10px">';
+  if (r.cerfaUrl) h += '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(r.cerfaUrl) + '">CERFA ' + esc(r.cerfa) + ' (PDF)</a>';
+  if (mes && mes.rapport) h += '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(mes.rapport) + '">Rapport d’installation (PDF)</a>';
+  h += '<div class="note">Rangés dans le Drive : ARE Fluides › Chantiers › ' + esc(S.cur.id + ' – ' + S.cur.client) + '. ' + (r.cerfa ? 'La ligne est ajoutée au registre des mouvements pour la déclaration annuelle.' : '') + '</div></div>';
+  if (r.bouteille) h += '<div class="rows"><div class="row"><span>Bouteille ' + esc(r.bouteille) + '</span><span>nouvelle pesée ' + esc(r.pesee) + ' kg</span></div></div>';
+  h += '<button class="btn" data-act="addManip">Ajouter une manipulation</button><button class="btn out" data-act="backToChantier">Retour à la fiche chantier</button>';
+  return h;
+};
+
+/* ---------- Actions */
+
+Object.assign(A, {
+  startMes: function () { if (!S.ctx) return; S.mes = newMesState(false); S.msg = null; go('mes'); },
+  addManip: function () { if (!S.ctx) return; S.mes = newMesState(true); S.msg = null; if (S.screen === 'mesDone') { S.stack = ['home']; S.screen = 'chantier'; } go('mes'); },
+  backToChantier: function () { S.stack = ['home']; S.screen = 'chantier'; S.msg = null; render(); window.scrollTo(0, 0); },
+  setOp: function (k) { S.mes.d.op = k; S.msg = null; render(); },
+  setFuite: function (v) { S.mes.d.fuite = v; render(); },
+  setRep0: function (v) { S.mes.d.fuites[0].rep = v; render(); },
+  setRep1: function (v) { S.mes.d.fuites[1].rep = v; render(); },
+  setRep2: function (v) { S.mes.d.fuites[2].rep = v; render(); },
+  mesPrev: function () { if (S.mes.step > 0) S.mes.step--; S.msg = null; render(); window.scrollTo(0, 0); },
+  mesNext: function () {
+    var steps = mesSteps(), err = mesCheckStep(steps[S.mes.step]);
+    if (err) { S.msg = { err: true, text: err }; render(); window.scrollTo(0, 0); return; }
+    S.mes.step = Math.min(S.mes.step + 1, steps.length - 1); S.msg = null; render(); window.scrollTo(0, 0);
+  },
+  pickPhoto: function (slot) { S.pendingSlot = slot; var i = document.getElementById('photoInput'); if (i) { i.value = ''; i.click(); } },
+  removePhoto: function (arg) { var p = arg.split('|'); S.mes.photos[p[0]].splice(+p[1], 1); render(); },
+  readPlate: function (w) { S.pendingPlate = w; var i = document.getElementById('plateInput'); if (i) { i.value = ''; i.click(); } },
+  clearSig: function () { S.mes.sig = null; render(); },
+  mesValidate: function () {
+    var m = S.mes, err = '';
+    mesSteps().some(function (k) { err = mesCheckStep(k); return !!err; });
+    if (err) { S.msg = { err: true, text: err }; render(); window.scrollTo(0, 0); return; }
+    var d = m.d, c = S.cur, uploads = [], result = { add: m.add };
+    S.ctx.photoSlots.forEach(function (s) { m.photos[s].forEach(function (p) { if (!p.id) uploads.push({ slot: s, p: p }); }); });
+    var i = 0;
+    var up = function () {
+      if (i >= uploads.length) return Promise.resolve();
+      var u = uploads[i++]; m.saving = 'Envoi des photos (' + i + ' / ' + uploads.length + ')…'; render();
+      return call('uploadPhoto', { chantierId: c.id, slot: u.slot, data: u.p.b64 }).then(function (x) { u.p.id = x.id; return up(); });
+    };
+    var newPhotos = function () { var l = []; S.ctx.photoSlots.forEach(function (s) { m.photos[s].forEach(function (p) { if (p.id && !p.sent) l.push({ slot: s, id: p.id }); }); }); return l; };
+    var sigPdf = m.sig;
+    up().then(function () { return trimSig(m.sig).then(function (t) { sigPdf = t; }); }).then(function () {
+      m.saving = 'Enregistrement…'; render();
+      var data = {
+        chantierId: c.id, op: d.op, date: isoToFr(d.date), serieUE: d.serieUE, serieUI: d.serieUI, chargeUsine: d.chargeUsine, vide: d.vide, tenue: d.tenue,
+        bouteille: d.bouteille, poidsAvant: d.poidsAvant, poidsApres: d.poidsApres, distributeur: d.distributeur, detecteur: d.detecteur,
+        fuite: d.fuite, fuites: d.fuite === 'oui' ? d.fuites : [], observations: d.observations, photos: newPhotos(), signature: sigPdf
+      };
+      return call('saveManip', data);
+    }).then(function (res) {
+      S.ctx.photoSlots.forEach(function (s) { m.photos[s].forEach(function (p) { p.sent = true; }); });
+      result.cerfa = res.cerfa;
+      if (d.bouteille) { result.bouteille = d.bouteille; result.pesee = d.poidsApres; }
+      var docs = Promise.resolve();
+      if (res.cerfa) {
+        docs = docs.then(function () { m.saving = 'Création du CERFA ' + res.cerfa + '…'; render(); return makeCerfa(res.cerfa, res.fields, sigPdf.split(',')[1]); })
+          .then(function (f) { result.cerfaUrl = f.url; });
+      }
+      return docs.then(function () { m.saving = 'Création du rapport d’installation…'; render(); return call('buildReport', { chantierId: c.id }); })
+        .catch(function (e) { result.docError = e.message; });
+    }).then(function () {
+      return call('mesContext', { chantierId: c.id }).then(function (ctx) { S.ctx = ctx; S.cur = ctx.chantier; });
+    }).then(function () {
+      m.saving = null; S.mesResult = result; S.stack = ['home', 'chantier']; S.screen = 'mesDone';
+      S.msg = result.docError ? { err: true, text: 'Enregistré, mais les documents n’ont pas pu être créés (' + result.docError + '). Utilise « Refaire les documents » sur la fiche chantier.' } : null;
+      call('listChantiers').then(function (l) { S.chantiers = l; });
+      render(); window.scrollTo(0, 0);
+    }).catch(function (e) {
+      m.saving = null; S.msg = { err: true, text: e.message }; render(); window.scrollTo(0, 0);
+    });
+  },
+  askDeleteManip: function (no) { S.confirmManip = no; render(); },
+  deleteManip: function (no) {
+    S.confirmManip = null; S.progress = 'Suppression de la fiche ' + no + '…'; render();
+    call('deleteManip', { cerfa: no }).then(function () { S.progress = 'Rapport d’installation…'; render(); return call('buildReport', { chantierId: S.cur.id }); })
+      .then(function () { S.progress = null; S.msg = { text: 'Fiche ' + no + ' supprimée.' }; return loadMes(); })
+      .catch(function (e) { S.progress = null; S.msg = { err: true, text: e.message }; render(); });
+  },
+  askDeleteMes: function () { S.confirmMes = true; render(); },
+  cancelDeleteMes: function () { S.confirmMes = false; render(); },
+  deleteMes: function () {
+    S.confirmMes = false; S.progress = 'Suppression de la mise en service…'; render();
+    call('deleteMes', { chantierId: S.cur.id }).then(function (c) {
+      S.progress = null; S.cur = c; S.msg = { text: 'Mise en service supprimée.' };
+      call('listChantiers').then(function (l) { S.chantiers = l; });
+      return loadMes();
+    }).catch(function (e) { S.progress = null; S.msg = { err: true, text: e.message }; render(); });
+  },
+  editMes: function () { var mes = S.ctx.mes; S.editMes = { date: frToIso(mes.date), serieUE: mes.serieUE, serieUI: mes.serieUI }; render(); },
+  cancelEditMes: function () { S.editMes = null; render(); },
+  saveEditMes: function () {
+    var e = S.editMes;
+    if (!e.date || e.date > todayIso()) { S.msg = { err: true, text: 'Date invalide ou dans le futur.' }; return render(); }
+    S.editMes = null; S.progress = 'Enregistrement…'; render();
+    call('updateMes', { chantierId: S.cur.id, date: isoToFr(e.date), serieUE: e.serieUE, serieUI: e.serieUI })
+      .then(function (r) { return remakeDocs(r.cerfas); })
+      .then(function () { S.msg = { text: 'Mise en service modifiée, documents refaits.' }; render(); })
+      .catch(function (err) { S.progress = null; S.msg = { err: true, text: err.message }; render(); });
+  },
+  remakeDocs: function () {
+    var mes = S.ctx.mes;
+    remakeDocs(mes.manips.map(function (x) { return x.cerfa; }))
+      .then(function () { S.msg = { text: 'Documents refaits.' }; render(); })
+      .catch(function (err) { S.progress = null; S.msg = { err: true, text: err.message }; render(); });
+  }
+});
+
+/* ---------- Photos, plaque et signature */
+
+document.addEventListener('change', function (e) {
+  var id = e.target.id;
+  if (id !== 'photoInput' && id !== 'plateInput') return;
+  var file = e.target.files && e.target.files[0];
+  if (!file || !S.mes) return;
+  if (id === 'photoInput') {
+    var slot = S.pendingSlot;
+    fileToPayload(file, 1600).then(function (p) {
+      S.mes.photos[slot].push({ b64: p.data, url: 'data:image/jpeg;base64,' + p.data }); render();
+    }).catch(function (err) { S.msg = { err: true, text: err.message }; render(); });
+    return;
+  }
+  var w = S.pendingPlate, slot2 = w === 'UE' ? 'Plaque signalétique UE' : 'Plaque signalétique UI';
+  S.mes.reading = w; S.msg = null; render();
+  fileToPayload(file, 1600).then(function (p) {
+    S.mes.photos[slot2].push({ b64: p.data, url: 'data:image/jpeg;base64,' + p.data });
+    return call('readPlate', { data: p.data, which: w });
+  }).then(function (r) {
+    S.mes.reading = null; S.mes.d['serie' + w] = r.serie;
+    S.msg = { text: 'N° de série lu : ' + r.serie + '. Vérifie-le avec la plaque.' }; render();
+  }).catch(function (err) { S.mes.reading = null; S.msg = { err: true, text: err.message }; render(); });
+});
+
+/** Recadre la signature sur le trait (fond transparent), pour qu'elle remplisse la case du CERFA. */
+function trimSig(dataUrl) {
+  return new Promise(function (resolve) {
+    var im = new Image();
+    im.onload = function () {
+      var c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+      var g = c.getContext('2d'); g.drawImage(im, 0, 0);
+      var px = g.getImageData(0, 0, c.width, c.height).data, x0 = c.width, y0 = c.height, x1 = -1, y1 = -1;
+      for (var y = 0; y < c.height; y++) for (var x = 0; x < c.width; x++) if (px[(y * c.width + x) * 4 + 3] > 10) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < 0) return resolve(dataUrl);
+      var pad = 6; x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad); x1 = Math.min(c.width - 1, x1 + pad); y1 = Math.min(c.height - 1, y1 + pad);
+      var o = document.createElement('canvas'); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1;
+      o.getContext('2d').drawImage(c, x0, y0, o.width, o.height, 0, 0, o.width, o.height);
+      resolve(o.toDataURL('image/png'));
+    };
+    im.onerror = function () { resolve(dataUrl); };
+    im.src = dataUrl;
+  });
+}
+function initSig() {
+  var cv = document.getElementById('sigCanvas');
+  if (!cv || cv._ready) return;
+  cv._ready = true;
+  var ratio = window.devicePixelRatio || 1, w = cv.clientWidth || 300, h = cv.clientHeight || 160;
+  cv.width = w * ratio; cv.height = h * ratio;
+  var g = cv.getContext('2d'); g.scale(ratio, ratio); g.lineWidth = 2.4; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#14306E';
+  if (S.mes.sig) { var im = new Image(); im.onload = function () { g.drawImage(im, 0, 0, w, h); }; im.src = S.mes.sig; }
+  var drawing = false, last = null, moved = false;
+  var pos = function (ev) { var r = cv.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; };
+  cv.addEventListener('pointerdown', function (ev) { drawing = true; moved = false; last = pos(ev); try { cv.setPointerCapture(ev.pointerId); } catch (x) {} ev.preventDefault(); });
+  cv.addEventListener('pointermove', function (ev) {
+    if (!drawing) return; var p = pos(ev); g.beginPath(); g.moveTo(last.x, last.y); g.lineTo(p.x, p.y); g.stroke(); last = p; moved = true; ev.preventDefault();
+  });
+  var end = function () {
+    if (!drawing) return; drawing = false;
+    if (moved) {
+      S.mes.sig = cv.toDataURL('image/png'); var hint = cv.parentNode.querySelector('.sighint'); if (hint) hint.remove();
+      if (S.msg && S.msg.err && /Signe/.test(S.msg.text)) { S.msg = null; var mb = document.querySelector('.msg.err'); if (mb) mb.remove(); }
+    }
+  };
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end); cv.addEventListener('pointerleave', end);
+}
 
 function render() {
   var scr = S.screen, logged = !!S.user;
@@ -589,6 +1090,7 @@ function render() {
   var focused = document.activeElement && document.activeElement.getAttribute('data-bind');
   document.getElementById('app').innerHTML = html;
   if (focused) { var el = document.querySelector('[data-bind="' + focused + '"]'); if (el) { el.focus(); try { var n = el.value.length; el.setSelectionRange(n, n); } catch (e) {} } }
+  if (scr === 'mes') initSig();
 }
 
 /* ============================== Événements ============================== */
@@ -604,10 +1106,11 @@ document.addEventListener('input', function (e) {
   if (!p || el.type === 'checkbox') return;
   setPath(p, el.value);
   if (p === 'search') S.page = 0;
+  updateLive(p);
   if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
 });
 /* ---------- Feuille de relevé : photo -> image allégée -> lecture par Claude -> pré-remplissage ---------- */
-function fileToPayload(file) {
+function fileToPayload(file, maxSide) {
   return new Promise(function (resolve, reject) {
     if (file.type === 'application/pdf') {
       if (file.size > 15 * 1024 * 1024) return reject(new Error('PDF trop lourd : envoie seulement la première page (ou une photo).'));
@@ -618,7 +1121,7 @@ function fileToPayload(file) {
     }
     var url = URL.createObjectURL(file), img = new Image();
     img.onload = function () {
-      var max = 2000, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+      var max = maxSide || 2000, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h));
       var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
       c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
       URL.revokeObjectURL(url);
@@ -679,7 +1182,9 @@ document.addEventListener('change', function (e) {
     render(); return;
   }
   if (p === 'form.modele') { var m = findMachine(el.value); if (m) applyMachine(S.form, m); render(); return; }
-  if (el.getAttribute('data-rerender') || p === 'form.fluideAutre' || p === 'form.longueur') render();
+  if (p === 'mes.d.bouteille') { var bb = S.ctx.bouteilles.filter(function (x) { return x.ref === el.value; })[0]; if (bb && bb.pesee && !S.mes.d.poidsAvant) S.mes.d.poidsAvant = bb.pesee; render(); return; }
+  if (p.indexOf('mes.d.') === 0) { updateLive(p); return; }
+  if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
 });
 document.addEventListener('keydown', function (e) {
   if (e.key !== 'Enter') return;

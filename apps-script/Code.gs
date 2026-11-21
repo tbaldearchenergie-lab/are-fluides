@@ -6,7 +6,7 @@
  * Les mots de passe sont stockés hachés (SHA-256 + sel) dans l'onglet caché « _Comptes ».
  */
 
-var APP = { name: 'ARE Fluides', version: 'L1', sessionSeconds: 6 * 60 * 60, hashRounds: 300 };
+var APP = { name: 'ARE Fluides', version: 'L2', sessionSeconds: 6 * 60 * 60, hashRounds: 300 };
 var SH = {
   params: 'Paramètres', ops: 'Opérateurs', chantiers: 'Chantiers', mouv: 'Mouvements', bout: 'Bouteilles',
   outils: 'Outillage', dist: 'Distributeurs', fluides: 'Fluides', machines: 'Machines', comptes: '_Comptes'
@@ -39,6 +39,17 @@ function api(req) {
       listFluides: listFluides_,
       listMachines: listMachines_,
       extractReleve: function (d) { return extractReleve_(d); },
+      mesContext: function (d) { return mesContext_(d, user); },
+      uploadPhoto: function (d) { return uploadPhoto_(d, user); },
+      readPlate: function (d) { return readPlate_(d); },
+      cerfaTemplate: function () { return cerfaTemplate_(); },
+      saveManip: function (d) { return saveManip_(d, user); },
+      saveCerfa: function (d) { return saveCerfa_(d, user); },
+      cerfaData: function (d) { return cerfaData_(d, user); },
+      buildReport: function (d) { return buildReport_(d, user); },
+      updateMes: function (d) { return updateMes_(d, user); },
+      deleteManip: function (d) { return deleteManip_(d, user); },
+      deleteMes: function (d) { return deleteMes_(d, user); },
       changePassword: function (d) { return changePassword_(user, d); },
       listOperateurs: function () { admin_(user); return listOperateurs_(); },
       saveOperateur: function (d) { admin_(user); return saveOperateur_(d, user); },
@@ -508,7 +519,7 @@ function deleteChantier_(d, user) {
     if (String(row['Date MES'] || '').trim()) throw new Error('Ce chantier a une mise en service : il ne peut pas être supprimé.');
     var mouv = [];
     try { mouv = readTable_(SH.mouv).rows; } catch (e) { mouv = []; }
-    if (mouv.some(function (m) { return String(m['Chantier / Client'] || '').trim() === d.id; })) throw new Error('Ce chantier a des opérations sur le fluide : il ne peut pas être supprimé.');
+    if (mouv.some(function (m) { return String(m['ID chantier'] || '').trim() === d.id || String(m['Chantier / Client'] || '').trim() === d.id; })) throw new Error('Ce chantier a des opérations sur le fluide : il ne peut pas être supprimé.');
     if (user.role !== 'admin' && String(row['Créé par'] || '') !== user.id) throw new Error('Tu ne peux supprimer que les chantiers que tu as créés.');
     var c = corbeille_();
     var rec = {};
@@ -704,4 +715,566 @@ function scoreMachines_(machines, info) {
 function testerCleClaude() {
   var t = callClaude_([{ type: 'text', text: 'Réponds simplement : OK' }], 10);
   Logger.log('Clé Claude opérationnelle, réponse : ' + t);
+}
+
+/* ================================================================== Livraison 2 : mises en service */
+
+var MES = {
+  sheet: 'Mises en service',
+  headers: ['ID', 'ID chantier', 'Date', 'Opérateur ID', 'Opérateur', 'N° série UE', 'N° série UI', 'Photos', 'Rapport (lien)', 'Rapport (ID)', 'Signature (ID)', 'Créée le', 'Modifiée le'],
+  mouvExtra: ['ID chantier', 'ID MES', 'Opérateur ID', 'CERFA (lien)', 'CERFA (ID)', 'Données'],
+  trashMes: '_MES supprimées', trashMouv: '_Mouvements supprimés',
+  ops: {
+    mes: 'Démarrage sans manipulation',
+    relache: 'Tirage au vide + ouverture des vannes',
+    ajout: 'Ajout de charge',
+    recup: 'Récupération de charge'
+  },
+  photoSlots: ['Plaque signalétique UE', 'Plaque signalétique UI', 'Étiquette fluide posée', 'Unité extérieure posée', 'Unité intérieure posée', 'Autre'],
+  photoRequired: ['Plaque signalétique UE', 'Plaque signalétique UI', 'Étiquette fluide posée']
+};
+
+/** Crée un onglet s'il manque, sinon ajoute les colonnes qui manquent. */
+function ensureSheet_(name, headers, hidden) {
+  var sh = ss_().getSheetByName(name);
+  if (!sh) {
+    sh = ss_().insertSheet(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (hidden) sh.hideSheet();
+    return sh;
+  }
+  headers.forEach(function (h) { ensureColumn_(name, h); });
+  return sh;
+}
+
+function params_() {
+  var p = {};
+  try { readTable_(SH.params).rows.forEach(function (r) { p[String(r['Paramètre']).trim()] = r['Valeur']; }); } catch (e) { /* onglet absent */ }
+  return p;
+}
+
+function num_(v) {
+  if (v === '' || v === null || v === undefined) return NaN;
+  var n = Number(String(v).replace(/\s/g, '').replace(',', '.'));
+  return isFinite(n) ? n : NaN;
+}
+function fr_(n, d) { return isFinite(n) ? (Math.round(n * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d).replace('.', ',') : ''; }
+function parseFr_(s) {
+  var m = String(s || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  var d = new Date(+m[3], +m[2] - 1, +m[1]);
+  return d.getDate() === +m[1] && d.getMonth() === +m[2] - 1 ? d : null;   // refuse le 31/02, le 32/11…
+}
+function today_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy'); }
+
+/** Droits sur une mise en service : admin, créateur du chantier ou opérateur qui l'a faite. */
+function canEditMes_(c, mesRow, user) {
+  if (user.role === 'admin') return true;
+  if (c && c.creePar === user.id) return true;
+  return !!(mesRow && String(mesRow['Opérateur ID']) === user.id);
+}
+
+/* ---------- Outillage, bouteilles, distributeurs */
+
+function outils_() {
+  var t; try { t = readTable_(SH.outils); } catch (e) { return []; }
+  var now = new Date();
+  return t.rows.map(function (r) {
+    var last = parseFr_(r['Dernier contrôle']), freq = num_(r['Fréquence (mois)']) || 12, next = null;
+    if (last) { next = new Date(last.getTime()); next.setMonth(next.getMonth() + freq); }
+    return {
+      id: String(r['ID']), type: String(r['Type'] || ''), marque: String(r['Marque'] || ''), ref: String(r['Référence'] || ''),
+      serie: String(r['N° de série'] || ''), dernierControle: last ? Utilities.formatDate(last, Session.getScriptTimeZone(), 'dd/MM/yyyy') : '',
+      prochainControle: next ? Utilities.formatDate(next, Session.getScriptTimeZone(), 'dd/MM/yyyy') : '',
+      ok: !!(next && next >= now),
+      label: [r['Marque'], r['Référence']].filter(Boolean).join(' ') + (r['N° de série'] ? ' n° ' + r['N° de série'] : '')
+    };
+  });
+}
+
+function bouteilles_() {
+  var t; try { t = readTable_(SH.bout); } catch (e) { return []; }
+  return t.rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); }).map(function (r) {
+    var vide = num_(r['Poids à vide (kg)']), pesee = num_(r['Dernière pesée (kg)']);
+    return {
+      ref: String(r['Réf bouteille']).trim(), type: String(r['Type'] || ''), fluide: normFluide_(r['Fluide']),
+      vide: isFinite(vide) ? fr_(vide, 2) : '', pesee: isFinite(pesee) ? fr_(pesee, 2) : '',
+      reste: isFinite(vide) && isFinite(pesee) ? fr_(pesee - vide, 2) : '',
+      statut: String(r['Statut'] || ''), distributeur: String(r['Distributeur (ID)'] || '')
+    };
+  });
+}
+
+function distributeurs_() {
+  var t; try { t = readTable_(SH.dist); } catch (e) { return []; }
+  return t.rows.filter(function (r) { return String(r['Nom'] || '').trim(); }).map(function (r) {
+    return { id: String(r['ID']), nom: String(r['Nom']), siret: String(r['SIRET'] || ''), adresse: String(r['Adresse du site de reprise'] || '') };
+  });
+}
+
+function fluideInfo_(code) {
+  var k = normFluide_(code), f = null;
+  try { f = listFluides_().filter(function (x) { return normFluide_(x.code) === k; })[0] || null; } catch (e) { f = null; }
+  return f;
+}
+
+/* ---------- Lecture du registre */
+
+function mesRows_(chantierId) {
+  ensureSheet_(MES.sheet, MES.headers);
+  return readTable_(MES.sheet).rows.filter(function (r) { return String(r['ID chantier']) === chantierId; });
+}
+
+function mouvTable_() {
+  MES.mouvExtra.forEach(function (h) { ensureColumn_(SH.mouv, h); });
+  return readTable_(SH.mouv);
+}
+
+function manipPublic_(r) {
+  var data = {};
+  try { data = JSON.parse(r['Données'] || '{}'); } catch (e) { data = {}; }
+  return {
+    cerfa: String(r['N° CERFA'] || ''), op: data.op || '', label: MES.ops[data.op] || String(r['Opération'] || ''), date: String(r['Date'] || ''),
+    bouteille: String(r['Bouteille'] || ''), quantite: data.quantite || '', chargeTotale: r['Charge totale machine (kg)'] === '' ? '' : fr_(num_(r['Charge totale machine (kg)']), 2),
+    lien: String(r['CERFA (lien)'] || ''), operateur: String(r['Opérateur'] || '')
+  };
+}
+
+function mesPublic_(row, c, user) {
+  if (!row) return null;
+  var manips = mouvTable_().rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); }).map(manipPublic_);
+  var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
+  return {
+    id: String(row['ID']), date: String(row['Date'] || ''), operateur: String(row['Opérateur'] || ''), operateurId: String(row['Opérateur ID'] || ''),
+    serieUE: String(row['N° série UE'] || ''), serieUI: String(row['N° série UI'] || ''), photos: photos.length,
+    rapport: String(row['Rapport (lien)'] || ''), manips: manips, peutModifier: canEditMes_(c, row, user)
+  };
+}
+
+/** Tout ce que l'écran de mise en service doit connaître pour un chantier. */
+function mesContext_(d, user) {
+  var c = getChantier_(d.chantierId);
+  var row = mesRows_(c.id)[0] || null;
+  var outils = outils_();
+  return {
+    chantier: c, machine: c.modele ? findMachine_(c.modele) : null, fluide: fluideInfo_(c.fluide),
+    detecteurs: outils.filter(function (o) { return /tecteur/i.test(o.type); }),
+    pompe: (outils.filter(function (o) { return /pompe/i.test(o.type); })[0] || null),
+    bouteilles: bouteilles_(), distributeurs: distributeurs_(),
+    mes: mesPublic_(row, c, user), operateur: { nom: (user.prenom + ' ' + user.nom).trim(), attestation: user.attestation },
+    ops: MES.ops, photoSlots: MES.photoSlots, photoRequired: MES.photoRequired
+  };
+}
+
+/* ---------- Google Drive */
+
+function folderPath_(names) {
+  var f = DriveApp.getRootFolder();
+  names.forEach(function (n) {
+    var it = f.getFoldersByName(n);
+    f = it.hasNext() ? it.next() : f.createFolder(n);
+  });
+  return f;
+}
+
+function chantierFolder_(c) {
+  var name = c.id + ' – ' + (c.client || c.nom || 'Client');
+  return folderPath_(['ARE Fluides', 'Chantiers', name]);
+}
+
+function saveFile_(folder, b64, mime, name) {
+  var blob = Utilities.newBlob(Utilities.base64Decode(b64), mime, name);
+  var file = folder.createFile(blob);
+  return { id: file.getId(), url: file.getUrl(), name: name };
+}
+
+function trashFile_(id) { if (!id) return; try { DriveApp.getFileById(id).setTrashed(true); } catch (e) { /* déjà supprimé */ } }
+
+/** À lancer une fois depuis l'éditeur (▶ Exécuter) : autorise l'accès au Drive et crée le dossier de l'appli. */
+function autoriserDrive() {
+  var f = folderPath_(['ARE Fluides', 'Chantiers']);
+  Logger.log('Drive opérationnel : dossier « ARE Fluides › Chantiers » prêt (' + f.getUrl() + ').');
+}
+
+/** Envoi d'une photo (JPEG allégé côté téléphone) dans le dossier du chantier. */
+function uploadPhoto_(d, user) {
+  var c = getChantier_(d.chantierId);
+  if (MES.photoSlots.indexOf(d.slot) < 0) throw new Error('Type de photo inconnu.');
+  if (!d.data || String(d.data).length > 12 * 1024 * 1024) throw new Error('Photo manquante ou trop lourde.');
+  var folder = chantierFolder_(c);
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyMMdd-HHmmss');
+  var f = saveFile_(folder, d.data, 'image/jpeg', stamp + ' ' + d.slot + '.jpg');
+  return { id: f.id, url: f.url, slot: d.slot };
+}
+
+/** Modèle vierge du CERFA 15497*04, gardé dans le Drive (copié une fois depuis le dépôt de l'appli). */
+var CERFA_SOURCE = 'https://raw.githubusercontent.com/tbaldearchenergie-lab/are-fluides/main/docs/cerfa_15497-04.pdf';
+function cerfaTemplate_() {
+  var folder = folderPath_(['ARE Fluides', 'Modèles']);
+  var it = folder.getFilesByName('cerfa_15497-04.pdf');
+  var file;
+  if (it.hasNext()) file = it.next();
+  else {
+    var res = UrlFetchApp.fetch(CERFA_SOURCE, { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) throw new Error('Modèle CERFA introuvable (erreur ' + res.getResponseCode() + ').');
+    file = folder.createFile(res.getBlob().setName('cerfa_15497-04.pdf'));
+  }
+  return Utilities.base64Encode(file.getBlob().getBytes());
+}
+
+/* ---------- Numéro de fiche CERFA : F + année + mois + séquence (jamais réutilisée) */
+
+function nextCerfa_(dateFr) {
+  var max = 0;
+  [SH.mouv, MES.trashMouv].forEach(function (n) {
+    if (!ss_().getSheetByName(n)) return;
+    readTable_(n).rows.forEach(function (r) {
+      var m = String(r['N° CERFA'] || '').match(/^F\d{6}(\d{4})$/);
+      if (m) max = Math.max(max, +m[1]);
+    });
+  });
+  var d = parseFr_(dateFr) || new Date();
+  return 'F' + Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyyMM') + ('0000' + (max + 1)).slice(-4);
+}
+
+/* ---------- Champs du CERFA, construits ici pour pouvoir les refaire à l'identique */
+
+function cerfaFields_(m) {
+  var p = params_();
+  var t = {}, checks = ['Case_MiseService'];
+  t['Fiche_no'] = m.cerfa;
+  t['Operateur'] = [p['Raison sociale'], p['Adresse'], p['SIRET'] ? 'SIRET : ' + p['SIRET'] : ''].filter(Boolean).join('\n');
+  t['Attestation_no'] = String(p['N° d’attestation de capacité'] || '');
+  t['Detenteur'] = [m.client, m.adresse].filter(Boolean).join('\n');
+  t['Equipement_ID'] = [m.machine, m.serieUE ? 'n° série UE ' + m.serieUE : ''].filter(Boolean).join(' – ');
+  t['Equipement_Fluide'] = String(m.fluide || '').replace(/^R-?/i, '');
+  t['Equipement_Charge'] = fr_(m.chargeTotale, 2);
+  t['Equipement_teqCO2'] = isFinite(m.gwp) ? fr_(m.chargeTotale * m.gwp / 1000, 3) : '';
+  if (m.detecteur) {
+    t['Detecteur_ID'] = m.detecteur.label;
+    var dc = parseFr_(m.detecteur.dernierControle);
+    if (dc) { t['Controle_Jour'] = ('0' + dc.getDate()).slice(-2); t['Controle_Mois'] = ('0' + (dc.getMonth() + 1)).slice(-2); t['Controle_Annee'] = String(dc.getFullYear()); }
+  }
+  if (m.fuite === 'oui') {
+    checks.push('Case_Fuite_Oui');
+    (m.fuites || []).slice(0, 3).forEach(function (f, i) {
+      if (!f || !String(f.loc || '').trim()) return;
+      t['Fuite_Loca_' + (i + 1)] = String(f.loc).trim();
+      checks.push(f.rep === 'afaire' ? 'Case_Rep_Fuite' + (i + 1) + '_AFaire' : 'Case_Rep_Fuite' + (i + 1) + '_realisee');
+    });
+  } else checks.push('Case_Fuite_Non');
+  var q = fr_(m.quantite, 2);
+  if (m.op === 'ajout') { t['11_Quantite'] = q; t['11_QA'] = q; t['11_QB'] = '0'; t['11_QC'] = '0'; t['11_QDE'] = '0'; t['11_Contenant_ID'] = m.bouteille || ''; }
+  else if (m.op === 'recup') {
+    t['11_Quantite'] = '0'; t['11_QDE'] = q; t['11_QD'] = q; t['11_QE'] = '0'; t['11_Contenant_ID'] = m.bouteille || '';
+    checks.push(m.inflammable ? 'Case_12_UN3161' : 'Case_12_UN1078');
+    if (m.distributeur) t['13_Instal'] = [m.distributeur.nom, m.distributeur.siret ? 'SIRET ' + m.distributeur.siret : '', m.distributeur.adresse].filter(Boolean).join(' – ');
+  } else { t['11_Quantite'] = '0'; t['11_QDE'] = '0'; }
+  t['14_Observations'] = m.observationsCerfa || '';
+  t['Sign_Operateur_Nom'] = m.operateur + (m.attestation ? ' – attestation n° ' + m.attestation : '');
+  t['Sign_Operateur_Qualite'] = 'Opérateur fluides frigorigènes';
+  t['Sign_Operateur_Date'] = m.date;
+  return { text: t, checks: checks, radio: { 'Bouton_Oui': '2' } };
+}
+
+function observations_(m) {
+  var s = [];
+  if (m.op === 'relache') {
+    s.push('Mise en service : tirage au vide' + (m.vide ? ' (' + m.vide + ' microns' + (m.tenue ? ', tenue ' + m.tenue + ' min' : '') + ')' : '') + ' et ouverture des vannes, charge usine ' + fr_(m.chargeUsine, 2) + ' kg.');
+  } else if (m.op === 'ajout') {
+    s.push('Mise en service : ajout de charge ' + fr_(m.quantite, 2) + ' kg (bouteille ' + m.bouteille + ').');
+  } else if (m.op === 'recup') {
+    s.push('Récupération de ' + fr_(m.quantite, 2) + ' kg de fluide (bouteille ' + m.bouteille + ').');
+  }
+  if (m.longueur) s.push('Liaisons ' + m.longueur + ' m' + (m.precharge ? ', précharge ' + m.precharge + ' m' : '') + (m.gpm ? ', ' + m.gpm + ' g/m' : '') + '.');
+  if (m.observations) s.push(String(m.observations).trim());
+  return s.join(' ');
+}
+
+/* ---------- Enregistrement d'une opération */
+
+function saveManip_(d, user) {
+  if (!MES.ops[d.op]) throw new Error('Choisis l’opération réalisée.');
+  var date = String(d.date || '').trim();
+  if (!parseFr_(date)) throw new Error('Date de l’intervention au format jj/mm/aaaa.');
+  if (parseFr_(date) > new Date()) throw new Error('La date de l’intervention ne peut pas être dans le futur.');
+  var c = getChantier_(d.chantierId);
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var mesSh = ensureSheet_(MES.sheet, MES.headers);
+    var mt = readTable_(MES.sheet);
+    var row = mt.rows.filter(function (r) { return String(r['ID chantier']) === c.id; })[0] || null;
+    if (row && !canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la compléter.');
+    if (row && d.op === 'mes') throw new Error('La mise en service est déjà enregistrée : choisis une manipulation de fluide.');
+
+    var fl = fluideInfo_(c.fluide), gwp = fl ? fl.gwp : num_(c.gwp);
+    var machine = c.modele ? findMachine_(c.modele) : null;
+    var chargeUsine = num_(d.chargeUsine);
+    if (!isFinite(chargeUsine)) chargeUsine = num_(c.chargeUsine);
+    if (!isFinite(chargeUsine) && machine) chargeUsine = num_(machine.charge);
+    var avant = num_(d.poidsAvant), apres = num_(d.poidsApres), quantite = 0;
+    if (d.op === 'ajout' || d.op === 'recup') {
+      if (!d.bouteille) throw new Error('Choisis la bouteille utilisée.');
+      if (!isFinite(avant) || !isFinite(apres)) throw new Error('Saisis les deux pesées de la bouteille.');
+      quantite = d.op === 'ajout' ? avant - apres : apres - avant;
+      if (!(quantite > 0)) throw new Error(d.op === 'ajout' ? 'La bouteille doit être plus légère après la charge.' : 'La bouteille doit être plus lourde après la récupération.');
+    }
+    var detecteur = null;
+    if (d.op !== 'mes') {
+      detecteur = outils_().filter(function (o) { return o.id === d.detecteur; })[0] || null;
+      if (!detecteur) throw new Error('Choisis le détecteur de fuite utilisé.');
+      if (!detecteur.ok) throw new Error('Le contrôle de ce détecteur est dépassé : il ne peut pas être utilisé.');
+    }
+    var distributeur = d.op === 'recup' ? (distributeurs_().filter(function (x) { return x.id === d.distributeur; })[0] || null) : null;
+    if (d.op === 'recup' && !distributeur) throw new Error('Choisis la destination du fluide récupéré (case 13).');
+
+    var now = new Date(), opNom = (user.prenom + ' ' + user.nom).trim() || user.email;
+    // En-tête de la mise en service (créé à la première opération)
+    if (!row) {
+      var rec = { 'ID': nextId_(mt.rows.concat(ss_().getSheetByName(MES.trashMes) ? readTable_(MES.trashMes).rows : []), 'M', 'ID'), 'ID chantier': c.id, 'Date': date,
+        'Opérateur ID': user.id, 'Opérateur': opNom, 'N° série UE': d.serieUE || '', 'N° série UI': d.serieUI || '', 'Photos': '[]', 'Créée le': now };
+      writeRow_(mt, rec, null);
+      mt = readTable_(MES.sheet);
+      row = mt.rows.filter(function (r) { return String(r['ID chantier']) === c.id; })[0];
+    } else {
+      var up = { 'Modifiée le': now };
+      if (d.serieUE) up['N° série UE'] = d.serieUE;
+      if (d.serieUI) up['N° série UI'] = d.serieUI;
+      writeRow_(mt, up, row._row);
+    }
+    // Photos et signature
+    var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
+    (d.photos || []).forEach(function (p) { if (p && p.id) photos.push({ slot: p.slot, id: p.id }); });
+    var upd = { 'Photos': JSON.stringify(photos) };
+    if (d.signature) {
+      var sig = saveFile_(chantierFolder_(c), String(d.signature).replace(/^data:image\/png;base64,/, ''), 'image/png', 'Signature ' + row['ID'] + ' ' + Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyMMdd-HHmmss') + '.png');
+      upd['Signature (ID)'] = sig.id;
+    }
+    writeRow_(readTable_(MES.sheet), upd, row._row);
+    // Fiche chantier : date de mise en service et numéros de série
+    var ct = readTable_(SH.chantiers), crow = ct.rows.filter(function (r) { return r['ID'] === c.id; })[0];
+    var cup = {};
+    if (!c.dateMes) cup['Date MES'] = date;
+    if (d.serieUE) cup['N° série UE'] = d.serieUE;
+    if (d.serieUI) cup['N° série UI'] = d.serieUI;
+    if (isFinite(chargeUsine) && !c.chargeUsine) cup['Charge usine (kg)'] = chargeUsine;
+    if (Object.keys(cup).length) writeRow_(ct, cup, crow._row);
+
+    var out = { mesId: String(row['ID']), cerfa: '' };
+    if (d.op === 'mes') return out;
+
+    // Charge totale de la machine après l'opération
+    var mv = mouvTable_();
+    var net = 0;
+    mv.rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); }).forEach(function (r) {
+      var x = {}; try { x = JSON.parse(r['Données'] || '{}'); } catch (e) { x = {}; }
+      if (x.op === 'ajout') net += num_(x.quantite) || 0;
+      if (x.op === 'recup') net -= num_(x.quantite) || 0;
+    });
+    if (d.op === 'ajout') net += quantite;
+    if (d.op === 'recup') net -= quantite;
+    var chargeTotale = (isFinite(chargeUsine) ? chargeUsine : 0) + net;
+
+    var cerfa = nextCerfa_(date);
+    var m = {
+      op: d.op, cerfa: cerfa, date: date, client: c.client, adresse: [c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', '),
+      machine: [c.marque, c.modele].filter(Boolean).join(' '), serieUE: d.serieUE || c.serieUE || '', fluide: c.fluide, gwp: gwp,
+      inflammable: fl ? fl.inflammable : String(c.inflam).toLowerCase() === 'oui', chargeUsine: chargeUsine, chargeTotale: chargeTotale,
+      quantite: quantite, bouteille: d.bouteille || '', distributeur: distributeur, detecteur: detecteur,
+      fuite: d.fuite === 'oui' ? 'oui' : 'non', fuites: d.fuites || [], vide: d.vide || '', tenue: d.tenue || '',
+      longueur: c.longueur, precharge: c.precharge, gpm: c.gpm, observations: d.observations || '',
+      operateur: opNom, attestation: user.attestation || ''
+    };
+    m.observationsCerfa = observations_(m);
+    writeRow_(mv, {
+      'Date': date, 'Opération': d.op === 'relache' ? 'Mise en service' : MES.ops[d.op], 'Cadre': 'Mise en service',
+      'Chantier / Client': c.client, 'Adresse': m.adresse, 'Machine': m.machine, 'Fluide': c.fluide, 'Bouteille': m.bouteille,
+      'Poids avant (kg)': isFinite(avant) ? avant : '', 'Poids après (kg)': isFinite(apres) ? apres : '',
+      'Variation bouteille (kg)': isFinite(avant) && isFinite(apres) ? Math.round((apres - avant) * 1000) / 1000 : 0,
+      'Charge totale machine (kg)': Math.round(chargeTotale * 1000) / 1000,
+      't éq. CO2': isFinite(gwp) ? Math.round(chargeTotale * gwp) / 1000 : '',
+      'Opérateur': opNom, 'N° CERFA': cerfa, 'Observations': m.observationsCerfa,
+      'ID chantier': c.id, 'ID MES': String(row['ID']), 'Opérateur ID': user.id, 'Données': JSON.stringify(m)
+    }, null);
+    // Stock : nouvelle pesée de la bouteille
+    if (m.bouteille && isFinite(apres)) {
+      var bt = readTable_(SH.bout), br = bt.rows.filter(function (r) { return String(r['Réf bouteille']).trim() === m.bouteille; })[0];
+      if (br) writeRow_(bt, { 'Dernière pesée (kg)': apres }, br._row);
+    }
+    out.cerfa = cerfa;
+    out.fields = cerfaFields_(m);
+    out.fileName = cerfaFileName_(m);
+    return out;
+  } finally { lock.releaseLock(); }
+}
+
+function aammjj_(dateFr) { var d = parseFr_(dateFr) || new Date(); return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyMMdd'); }
+function cerfaFileName_(m) { return aammjj_(m.date) + ' CERFA ' + String(m.client || '').replace(/[\\\/:*?"<>|]/g, ' ').trim() + ' ' + m.cerfa + '.pdf'; }
+
+function findMouv_(cerfa) {
+  var mv = mouvTable_();
+  var r = mv.rows.filter(function (x) { return String(x['N° CERFA']) === String(cerfa); })[0];
+  if (!r) throw new Error('Fiche ' + cerfa + ' introuvable dans le registre.');
+  return { t: mv, row: r };
+}
+
+/** Reçoit le CERFA rempli et signé (PDF fait sur le téléphone) et le range dans le Drive du chantier. */
+function saveCerfa_(d, user) {
+  var f = findMouv_(d.cerfa);
+  var c = getChantier_(String(f.row['ID chantier']));
+  var mesRow = mesRows_(c.id)[0];
+  if (String(f.row['Opérateur ID']) !== user.id && !canEditMes_(c, mesRow, user)) throw new Error('Tu ne peux pas modifier cette fiche.');
+  if (!d.pdf) throw new Error('PDF manquant.');
+  var m = {}; try { m = JSON.parse(f.row['Données'] || '{}'); } catch (e) { m = {}; }
+  trashFile_(String(f.row['CERFA (ID)'] || ''));
+  var file = saveFile_(chantierFolder_(c), d.pdf, 'application/pdf', cerfaFileName_(m));
+  writeRow_(f.t, { 'CERFA (lien)': file.url, 'CERFA (ID)': file.id }, f.row._row);
+  return file;
+}
+
+/** Données pour refaire un CERFA à l'identique (même numéro, signature enregistrée). */
+function cerfaData_(d, user) {
+  var f = findMouv_(d.cerfa);
+  var c = getChantier_(String(f.row['ID chantier']));
+  var mesRow = mesRows_(c.id)[0];
+  if (!canEditMes_(c, mesRow, user)) throw new Error('Tu ne peux pas modifier cette fiche.');
+  var m = {}; try { m = JSON.parse(f.row['Données'] || '{}'); } catch (e) { m = {}; }
+  var sig = '';
+  if (mesRow && mesRow['Signature (ID)']) { try { sig = Utilities.base64Encode(DriveApp.getFileById(String(mesRow['Signature (ID)'])).getBlob().getBytes()); } catch (e) { sig = ''; } }
+  return { cerfa: m.cerfa, fields: cerfaFields_(m), signature: sig, fileName: cerfaFileName_(m) };
+}
+
+/* ---------- Rapport d'installation (HTML converti en PDF par Google) */
+
+function buildReport_(d, user) {
+  var c = getChantier_(d.chantierId);
+  var row = mesRows_(c.id)[0];
+  if (!row) throw new Error('Aucune mise en service sur ce chantier.');
+  var p = params_(), tz = Session.getScriptTimeZone();
+  var manips = mouvTable_().rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); });
+  var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
+  var e = function (s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"]/g, function (x) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[x]; }); };
+  var rowsHtml = function (pairs) { return pairs.filter(function (x) { return x[1] !== '' && x[1] !== undefined; }).map(function (x) { return '<tr><th>' + e(x[0]) + '</th><td>' + e(x[1]) + '</td></tr>'; }).join(''); };
+  var html = '<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:11px;color:#14201A;margin:28px}' +
+    'h1{font-size:20px;margin:0}h2{font-size:13px;margin:18px 0 6px;color:#1F6B45;text-transform:uppercase;letter-spacing:.04em}' +
+    'table{border-collapse:collapse;width:100%}th{text-align:left;color:#4A5A51;font-weight:normal;width:38%;padding:4px 6px;border-bottom:1px solid #E6EAE6;vertical-align:top}' +
+    'td{padding:4px 6px;border-bottom:1px solid #E6EAE6;font-weight:bold}.ph{display:inline-block;width:46%;margin:0 2% 12px 0;vertical-align:top}' +
+    '.ph img{width:100%;border:1px solid #C9D2CC}.ph div{font-size:10px;color:#4A5A51;margin-top:2px}.head{border-bottom:3px solid #1F6B45;padding-bottom:8px;margin-bottom:6px}</style></head><body>' +
+    '<div class="head"><h1>Rapport d’installation</h1><div>' + e(p['Raison sociale'] || 'Archenergie Renouvelable') + ' · ' + e(p['Adresse'] || '') + '</div></div>' +
+    '<h2>Chantier</h2><table>' + rowsHtml([['Client', c.client], ['Adresse', [c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ')], ['N° projet', c.projet], ['Date de mise en service', row['Date']], ['Opérateur', row['Opérateur']]]) + '</table>' +
+    '<h2>Installation</h2><table>' + rowsHtml([['Type d’installation', c.type], ['Unité extérieure', [c.marque, c.modele].filter(Boolean).join(' ')], ['N° de série UE', row['N° série UE'] || c.serieUE], ['N° de série UI', row['N° série UI'] || c.serieUI],
+      ['Fluide', c.fluide + (c.gwp ? ' (GWP ' + c.gwp + ')' : '')], ['Charge usine', c.chargeUsine ? c.chargeUsine + ' kg' : ''], ['Liaisons frigorifiques', c.longueur ? c.longueur + ' m' + (c.precharge ? ' · précharge ' + c.precharge + ' m' : '') + (c.gpm ? ' · ' + c.gpm + ' g/m' : '') : '']]) + '</table>' +
+    '<h2>Opérations réalisées</h2><table>' + (manips.length ? manips.map(function (r) {
+      return '<tr><th>' + e(r['Date']) + ' · ' + e(r['Opération']) + '</th><td>' + e(r['Observations']) + (r['N° CERFA'] ? '<br><span style="font-weight:normal">CERFA ' + e(r['N° CERFA']) + '</span>' : '') + '</td></tr>';
+    }).join('') : '<tr><th>' + e(row['Date']) + '</th><td>Démarrage sans manipulation de fluide.</td></tr>') + '</table>';
+  if (photos.length) {
+    html += '<h2>Photos</h2>';
+    photos.slice(0, 12).forEach(function (ph) {
+      try {
+        var b = DriveApp.getFileById(ph.id).getBlob();
+        html += '<div class="ph"><img src="data:image/jpeg;base64,' + Utilities.base64Encode(b.getBytes()) + '"><div>' + e(ph.slot) + '</div></div>';
+      } catch (x) { /* photo supprimée */ }
+    });
+  }
+  html += '<p style="margin-top:20px;color:#4A5A51">Document établi le ' + Utilities.formatDate(new Date(), tz, 'dd/MM/yyyy') + ' par l’application ARE Fluides.</p></body></html>';
+  var name = aammjj_(String(row['Date'])) + ' Rapport installation ' + String(c.client || '').replace(/[\\\/:*?"<>|]/g, ' ').trim() + '.pdf';
+  var blob = HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(name);
+  trashFile_(String(row['Rapport (ID)'] || ''));
+  var file = chantierFolder_(c).createFile(blob);
+  writeRow_(readTable_(MES.sheet), { 'Rapport (lien)': file.getUrl(), 'Rapport (ID)': file.getId() }, row._row);
+  return { url: file.getUrl(), name: name };
+}
+
+/* ---------- Modification et suppression */
+
+function updateMes_(d, user) {
+  var c = getChantier_(d.chantierId);
+  var row = mesRows_(c.id)[0];
+  if (!row) throw new Error('Aucune mise en service sur ce chantier.');
+  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la modifier.');
+  var date = String(d.date || '').trim();
+  if (!parseFr_(date)) throw new Error('Date au format jj/mm/aaaa.');
+  if (parseFr_(date) > new Date()) throw new Error('La date ne peut pas être dans le futur.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    writeRow_(readTable_(MES.sheet), { 'Date': date, 'N° série UE': d.serieUE || '', 'N° série UI': d.serieUI || '', 'Modifiée le': new Date() }, row._row);
+    var ct = readTable_(SH.chantiers), crow = ct.rows.filter(function (r) { return r['ID'] === c.id; })[0];
+    writeRow_(ct, { 'Date MES': date, 'N° série UE': d.serieUE || '', 'N° série UI': d.serieUI || '' }, crow._row);
+    // Les opérations gardent leur numéro de fiche : la date et le n° de série sont repris dans leurs données
+    var mv = mouvTable_(), cerfas = [];
+    mv.rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); }).forEach(function (r) {
+      var m = {}; try { m = JSON.parse(r['Données'] || '{}'); } catch (e) { m = {}; }
+      m.date = date; m.serieUE = d.serieUE || '';
+      writeRow_(mv, { 'Date': date, 'Données': JSON.stringify(m) }, r._row);
+      cerfas.push(String(r['N° CERFA']));
+    });
+    return { cerfas: cerfas };
+  } finally { lock.releaseLock(); }
+}
+
+function archiveRow_(trashName, t, r, user) {
+  var src = t.headers.concat(['Supprimé le', 'Supprimé par']);
+  ensureSheet_(trashName, src, true);
+  var tt = readTable_(trashName), rec = {};
+  t.headers.forEach(function (h) { if (h) rec[h] = r[h]; });
+  rec['Supprimé le'] = new Date(); rec['Supprimé par'] = (user.prenom + ' ' + user.nom).trim() || user.email;
+  writeRow_(tt, rec, null);
+}
+
+function deleteManipRow_(mv, r, user) {
+  var m = {}; try { m = JSON.parse(r['Données'] || '{}'); } catch (e) { m = {}; }
+  // Stock : on remet la pesée d'avant si la bouteille n'a pas servi depuis
+  if (m.bouteille) {
+    var bt = readTable_(SH.bout), br = bt.rows.filter(function (x) { return String(x['Réf bouteille']).trim() === m.bouteille; })[0];
+    if (br && num_(br['Dernière pesée (kg)']) === num_(r['Poids après (kg)']) && isFinite(num_(r['Poids avant (kg)']))) writeRow_(bt, { 'Dernière pesée (kg)': num_(r['Poids avant (kg)']) }, br._row);
+  }
+  trashFile_(String(r['CERFA (ID)'] || ''));
+  archiveRow_(MES.trashMouv, mv, r, user);
+  mv.sh.deleteRow(r._row);
+}
+
+function deleteManip_(d, user) {
+  var f = findMouv_(d.cerfa);
+  var c = getChantier_(String(f.row['ID chantier']));
+  var row = mesRows_(c.id)[0];
+  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la modifier.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try { deleteManipRow_(f.t, f.row, user); } finally { lock.releaseLock(); }
+  return true;
+}
+
+function deleteMes_(d, user) {
+  var c = getChantier_(d.chantierId);
+  var row = mesRows_(c.id)[0];
+  if (!row) throw new Error('Aucune mise en service sur ce chantier.');
+  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la supprimer.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    // Les opérations d'abord, de bas en haut pour garder les numéros de ligne
+    var mv = mouvTable_();
+    mv.rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); }).reverse().forEach(function (r) { deleteManipRow_(mv, r, user); });
+    trashFile_(String(row['Rapport (ID)'] || ''));
+    var mt = readTable_(MES.sheet);
+    archiveRow_(MES.trashMes, mt, mt.rows.filter(function (r) { return String(r['ID']) === String(row['ID']); })[0], user);
+    mt.sh.deleteRow(row._row);
+    var ct = readTable_(SH.chantiers), crow = ct.rows.filter(function (r) { return r['ID'] === c.id; })[0];
+    writeRow_(ct, { 'Date MES': '' }, crow._row);
+  } finally { lock.releaseLock(); }
+  return getChantier_(c.id);
+}
+
+/* ---------- Lecture du n° de série sur la photo de la plaque */
+
+function readPlate_(d) {
+  if (!d.data) throw new Error('Aucune photo reçue.');
+  var prompt = 'Photo de la plaque signalétique d’une ' + (d.which === 'UI' ? 'unité intérieure' : 'unité extérieure') + ' de pompe à chaleur ou de climatisation.\n' +
+    'Réponds UNIQUEMENT par un objet JSON : {"serie": numéro de série (Serial No., N° de série, S/N), "modele": référence du modèle, "marque": marque, "fluide": fluide frigorigène (ex. R32), "charge": charge en fluide en kg (nombre)}.\n' +
+    'Mets "" pour ce qui est absent ou illisible. Ne devine jamais : recopie exactement les caractères du numéro de série.';
+  var text = callClaude_([{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: String(d.data) } }, { type: 'text', text: prompt }], 300);
+  var i = text.indexOf('{'), j = text.lastIndexOf('}');
+  var raw = {}; try { raw = JSON.parse(text.slice(i, j + 1)); } catch (e) { raw = {}; }
+  var out = {};
+  ['serie', 'modele', 'marque', 'fluide', 'charge'].forEach(function (k) { out[k] = raw[k] === null || raw[k] === undefined ? '' : String(raw[k]).trim().slice(0, 80); });
+  if (!out.serie) throw new Error('N° de série illisible : reprends la photo plus près, ou saisis-le à la main.');
+  return out;
 }
