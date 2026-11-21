@@ -480,13 +480,16 @@ function listFluides_() {
 
 /* ------------------------------------------------------------------ Machines (base des PAC) */
 
-/** Onglet « Machines » : une ligne par unité extérieure. Absent = liste vide (l'appli reste utilisable). */
+/** Onglet « Machines » : tous les appareils (UE, UI, modules, ballons). Absent = liste vide (l'appli reste utilisable). */
 function listMachines_() {
   if (!ss_().getSheetByName(SH.machines)) return [];
   var dec = function (v) { return v === '' || v === null || v === undefined ? '' : String(v).replace('.', ','); };
-  return readTable_(SH.machines).rows.filter(function (r) { return String(r['Modèle UE'] || '').trim(); }).map(function (r) {
+  var mod = function (r) { return String(r['Modèle'] || r['Modèle UE'] || '').trim(); };
+  // Une seule liste dans l'onglet : on ne propose que les unités extérieures et les monoblocs
+  var interieur = /^(Unité intérieure|Module hydraulique|Ballon)/i;
+  return readTable_(SH.machines).rows.filter(function (r) { return mod(r) && !interieur.test(String(r['Catégorie'] || '')); }).map(function (r) {
     return {
-      marque: String(r['Marque'] || '').trim(), modele: String(r['Modèle UE']).trim(), gamme: String(r['Gamme'] || ''),
+      marque: String(r['Marque'] || '').trim(), modele: mod(r), gamme: String(r['Gamme'] || ''),
       type: TYPES_INSTALL.indexOf(String(r['Type d’installation'])) >= 0 ? String(r['Type d’installation']) : '',
       liaison: String(r['Liaisons'] || ''), fluide: String(r['Fluide'] || '').toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R'),
       charge: dec(r['Charge usine (kg)']), precharge: dec(r['Longueur préchargée (m)']), gpm: dec(r['Charge supplémentaire (g/m)']),

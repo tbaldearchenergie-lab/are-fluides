@@ -21,6 +21,6 @@ L'adresse de l'application est réglée dans `docs/config.js`.
 ## Livraisons
 
 - **L1** : connexion, comptes admin / opérateurs (désactivation, suppression), chantiers (création, modification, recherche).
-- **Base machines** : onglet « Machines » du tableur (une ligne par unité extérieure). Le choix du modèle d'UE remplit marque, fluide, longueur préchargée et charge en g/m.
+- **Base machines** : onglet « Machines » du tableur (tous les appareils : UE, UI, modules hydrauliques, ballons ; seules les UE et monoblocs sont proposées dans l’appli). Le choix du modèle d'UE remplit marque, fluide, longueur préchargée et charge en g/m.
 - **L2** (à venir) : mise en service, manipulations, photos, signature, CERFA PDF, rapport d'installation.
 - **L3** (à venir) : bouteilles, détecteurs, distributeurs, déclaration annuelle.
