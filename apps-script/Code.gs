@@ -497,7 +497,8 @@ function listFluides_() {
 /** Onglet « Machines » : tous les appareils (UE, UI, modules, ballons). Absent = liste vide (l'appli reste utilisable). */
 function listMachines_() {
   if (!ss_().getSheetByName(SH.machines)) return [];
-  var dec = function (v) { return v === '' || v === null || v === undefined ? '' : String(v).replace('.', ','); };
+  // « NA » = non applicable : traité comme vide
+  var dec = function (v) { return v === '' || v === null || v === undefined || /^n\.?a\.?$/i.test(String(v).trim()) ? '' : String(v).replace('.', ','); };
   var mod = function (r) { return String(r['Modèle'] || r['Modèle UE'] || '').trim(); };
   // Une seule liste dans l'onglet : on ne propose que les unités extérieures et les monoblocs
   var interieur = /^(Unité intérieure|Module hydraulique|Ballon|Split|Gainable)/i;
