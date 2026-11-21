@@ -150,7 +150,7 @@ function loadChantiers() {
 }
 function emptyForm() {
   return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', marque: '', modele: '',
-    longueur: '', precharge: '', gpm: '', type: 'PAC AE', fluideChoix: 'R32', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '' };
+    longueur: '', precharge: '', gpm: '', type: '', fluideChoix: '', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '' };
 }
 function formFromChantier(c) {
   var f = emptyForm();
@@ -180,9 +180,35 @@ function applyMachine(f, m) {
     f.gwpManuel = '';
   }
 }
+function brands() {
+  var out = [];
+  S.machines.forEach(function (m) { if (m.marque && out.indexOf(m.marque) < 0) out.push(m.marque); });
+  return out.sort();
+}
+function brandMatch(b) { b = String(b || '').trim().toLowerCase(); return b ? brands().filter(function (x) { return x.toLowerCase() === b; })[0] || '' : ''; }
+/** Unité extérieure : d'abord la marque, puis le modèle de cette marque ; le choix du modèle remplit le reste. */
+function ueFields(f) {
+  if (!S.machines.length) return field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) + field('Modèle', 'form.modele', { ph: 'Ex. ERGA04EV' });
+  var bm = f._marqueAutre ? '' : brandMatch(f.marque);
+  var bSel = f._marqueAutre || (f.marque && !bm) ? 'Autre' : bm;
+  var html = '<label>Marque<select data-bind="form._marqueSel">' +
+    ['<option value="">Choisir la marque…</option>'].concat(brands().map(function (b) { return '<option' + (b === bSel ? ' selected' : '') + '>' + esc(b) + '</option>'; }))
+      .concat('<option value="Autre"' + (bSel === 'Autre' ? ' selected' : '') + '>Autre marque…</option>').join('') + '</select></label>';
+  if (bSel === 'Autre') return html + field('Nom de la marque', 'form.marque', { ph: 'Ex. Atlantic' }) + field('Modèle', 'form.modele', { ph: 'Référence de l’unité extérieure' });
+  if (!bm) return html;
+  var mm = findMachine(f.modele), mSel = f._modeleAutre || (f.modele && !(mm && mm.marque === bm)) ? 'Autre' : (mm ? mm.modele : '');
+  var groups = {}, order = [];
+  S.machines.forEach(function (m) { if (m.marque !== bm) return; var g = m.appareil || m.gamme || 'Autres'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(m); });
+  html += '<label>Modèle<select data-bind="form._modeleSel"><option value="">Choisir le modèle…</option>' +
+    order.map(function (g) {
+      return '<optgroup label="' + esc(g) + '">' + groups[g].map(function (m) { return '<option value="' + esc(m.modele) + '"' + (m.modele === mSel ? ' selected' : '') + '>' + esc(m.modele + (m.gamme ? ' – ' + m.gamme : '')) + '</option>'; }).join('') + '</optgroup>';
+    }).join('') + '<option value="Autre"' + (mSel === 'Autre' ? ' selected' : '') + '>Autre modèle…</option></select></label>';
+  if (mSel === 'Autre') html += field('Référence du modèle', 'form.modele', { ph: 'Référence de l’unité extérieure' });
+  return html + machineHint(f);
+}
 function machineHint(f) {
   var m = findMachine(f.modele);
-  if (!m) return f.modele && S.machines.length ? '<div class="note">Modèle absent de la base machines : remplis les champs à la main.</div>' : '';
+  if (!m) return f.modele && S.machines.length ? '<div class="note">Modèle absent de la base machines : remplis la précharge et la charge à la main.</div>' : '';
   var bits = [m.fluide, m.charge ? 'charge usine ' + m.charge + ' kg' : '', m.precharge ? 'préchargé ' + m.precharge + ' m' : '', m.gpm ? m.gpm + ' g/m' : ''].filter(Boolean);
   var manque = [!m.precharge && /frigo/i.test(m.liaison) ? 'précharge' : '', !m.gpm && /frigo/i.test(m.liaison) ? 'g/m' : ''].filter(Boolean);
   return '<div class="msg ok" style="margin:0"><b>' + esc(m.marque + ' ' + m.gamme) + '</b>' + (m.appareil ? '<br>' + esc([m.appareil, m.usage].filter(Boolean).join(' · ')) : '') + '<br>' + esc(bits.join(' · ')) +
@@ -219,7 +245,7 @@ var A = {
     var f = S.form, fl = formFluid(f);
     var data = {
       id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville,
-      marque: f.marque, modele: f.modele, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
+      marque: brandMatch(f.marque) || f.marque, modele: f.modele, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
       fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires
     };
     run(call('saveChantier', data), f.id ? 'Fiche chantier enregistrée.' : 'Chantier créé.').then(function (c) {
@@ -360,7 +386,7 @@ var V = {
     var f = S.form, fl = formFluid(f), info = fluidInfo(fl);
     var gwpHint = f.gwpManuel ? 'Valeur saisie à la main' : (info ? 'Rempli automatiquement pour ' + fl + ' : ' + info.gwp + ' · modifiable' : (fl ? 'Fluide inconnu : saisis le GWP à la main' : ''));
     var opts = ['', 'R32', 'R410A', 'R454C', 'Autre'].map(function (v) { return '<option value="' + v + '"' + (f.fluideChoix === v ? ' selected' : '') + '>' + (v === '' ? 'Non renseigné' : v === 'Autre' ? 'Autre…' : v) + '</option>'; }).join('');
-    var types = TYPES.map(function (v) { return '<option' + (f.type === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
+    var types = '<option value=""' + (!f.type ? ' selected' : '') + '>Non renseigné</option>' + TYPES.map(function (v) { return '<option' + (f.type === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
     var lu = S.form._lu;
     var reader = S.reading
       ? '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><div class="spin" style="margin:0;flex:0 0 auto"></div><div><b>Lecture de la feuille…</b><div class="note">10 à 30 secondes, garde l’appli ouverte.</div></div></div>'
@@ -375,9 +401,7 @@ var V = {
       field('Adresse', 'form.adresse') + '<div class="g2">' + field('Code postal', 'form.cp', { mode: 'numeric' }) + field('Ville', 'form.ville') + '</div>' +
       field('N° projet', 'form.projet') + '</div>' +
       '<div class="sec">Unité extérieure</div><div class="card">' +
-      '<label>Modèle<input type="text" list="machinesList" autocomplete="off" autocapitalize="characters" data-bind="form.modele" value="' + esc(f.modele) + '" placeholder="Tape le début de la référence, ex. RXM35"></label>' +
-      '<datalist id="machinesList">' + S.machines.map(function (m) { return '<option value="' + esc(m.modele) + '">' + esc(m.marque + ' · ' + m.gamme) + '</option>'; }).join('') + '</datalist>' +
-      machineHint(f) + field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) +
+      ueFields(f) +
       '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques</div><div class="g3">' +
       field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
       '<div class="sec">Installation</div><div class="card">' +
@@ -476,7 +500,6 @@ document.addEventListener('input', function (e) {
   if (!p || el.type === 'checkbox') return;
   setPath(p, el.value);
   if (p === 'search') S.page = 0;
-  if (p === 'form.modele') { var m = findMachine(el.value); if (m && m.modele === el.value) { applyMachine(S.form, m); render(); } }
   if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
 });
 /* ---------- Feuille de relevé : photo -> image allégée -> lecture par Claude -> pré-remplissage ---------- */
@@ -529,6 +552,18 @@ document.addEventListener('change', function (e) {
   if (!p) return;
   if (el.type === 'checkbox') { setPath(p, el.checked); return; }
   setPath(p, el.value);
+  if (p === 'form._marqueSel') {
+    var f = S.form, b = el.value;
+    f._marqueAutre = b === 'Autre'; f.marque = b === 'Autre' ? '' : b; f._modeleAutre = false;
+    var cur = findMachine(f.modele); if (!cur || cur.marque !== f.marque) f.modele = '';
+    render(); return;
+  }
+  if (p === 'form._modeleSel') {
+    var f2 = S.form;
+    f2._modeleAutre = el.value === 'Autre';
+    if (f2._modeleAutre) f2.modele = ''; else { f2.modele = el.value; var mm = findMachine(el.value); if (mm) applyMachine(f2, mm); }
+    render(); return;
+  }
   if (p === 'form.modele') { var m = findMachine(el.value); if (m) applyMachine(S.form, m); render(); return; }
   if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
 });
