@@ -38,6 +38,10 @@
   .btn.ghost{background:transparent;color:var(--green);font-weight:600}
   .btn[disabled]{background:#D5DCD7;color:var(--muted);cursor:not-allowed}
   .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .pw{position:relative;display:block}
+  .pw input{padding-right:52px;width:100%}
+  .pw .eye{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;background:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .sharebox{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;background:var(--mint);border-radius:12px;padding:12px;user-select:all;-webkit-user-select:all}
   .chip{min-height:44px;padding:0 16px;border-radius:99px;border:1.5px solid var(--field);background:#fff;font-size:14px;font-weight:600;cursor:pointer}
   .chip.on{border-color:var(--green);background:var(--green);color:#fff}
   .item{text-align:left;border:0;border-radius:16px;background:#fff;padding:16px;display:flex;flex-direction:column;gap:6px;cursor:pointer;box-shadow:0 1px 2px rgba(20,32,26,.08);width:100%}
@@ -73,7 +77,7 @@
 var S = {
   token: null, user: null, screen: 'loading', stack: [], status: null, msg: null, loaded: false,
   chantiers: [], search: '', page: 0, cur: null, form: null, fluides: [], machines: [],
-  ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '' }, busy: false
+  ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '', confirm: '' }, busy: false, showPw: {}, share: null, mine: load('are_mine') === '1'
 };
 var TYPES = ['PAC AE', 'PAC AA Monosplit', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
 var MAIN_FLUIDS = ['R32', 'R410A', 'R454C'];
@@ -131,6 +135,8 @@ function back() { S.screen = S.stack.pop() || 'home'; S.msg = null; render(); wi
 function fluidInfo(code) { for (var i = 0; i < S.fluides.length; i++) if (S.fluides[i].code === code) return S.fluides[i]; return null; }
 function genPassword() { var c = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789', s = ''; for (var i = 0; i < 10; i++) s += c.charAt(Math.floor(Math.random() * c.length)); return s; }
 var ICON = {
+  eye: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.6 10.6 0 0112 5c6.5 0 10 7 10 7a17.6 17.6 0 01-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 005.4-1.6"/><path d="M9.9 9.9a3 3 0 004.2 4.2"/></svg>',
   back: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>',
   home: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg>',
   plus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
@@ -307,7 +313,8 @@ var A = {
   setInflam: function (v) { S.form.inflam = v; render(); },
   startMes: function () { S.msg = { text: 'La mise en service arrive avec la livraison 2.' }; render(); },
   changePassword: function () {
-    run(call('changePassword', { oldPassword: S.pwd.oldPassword, newPassword: S.pwd.newPassword, remember: load('are_remember') }), 'Mot de passe modifié. Tes autres appareils ont été déconnectés.').then(function () { S.pwd = { oldPassword: '', newPassword: '' }; render(); });
+    if (S.pwd.newPassword !== S.pwd.confirm) { S.msg = { err: true, text: 'Les deux nouveaux mots de passe ne sont pas identiques.' }; return render(); }
+    run(call('changePassword', { oldPassword: S.pwd.oldPassword, newPassword: S.pwd.newPassword, remember: load('are_remember') }), 'Mot de passe modifié. Tes autres appareils ont été déconnectés.').then(function () { S.pwd = { oldPassword: '', newPassword: '', confirm: '' }; S.showPw = {}; render(); });
   },
   goAdmin: function () { go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
   newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', email2: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
@@ -327,11 +334,24 @@ var A = {
     run(call('deleteOperateur', { id: S.opForm.id }), 'Compte supprimé.').then(function (l) { S.ops = l; S.screen = S.stack.pop() || 'admin'; render(); });
   },
   setRole: function (v) { S.opForm.role = v; render(); },
+  togglePw: function (p) { S.showPw[p] = !S.showPw[p]; render(); var el = document.querySelector('[data-bind="' + p + '"]'); if (el) el.focus(); },
+  setMine: function (v) { S.mine = v === '1'; store('are_mine', S.mine ? '1' : null); S.page = 0; render(); },
+  closeShare: function () { S.share = null; render(); },
+  copyShare: function () {
+    var t = shareText(S.share), done = function () { S.msg = { text: 'Identifiants copiés : colle-les dans un e-mail, un SMS ou WhatsApp.' }; render(); };
+    var fallback = function () {
+      var ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select(); var ok = false; try { ok = document.execCommand('copy'); } catch (e) {} document.body.removeChild(ta);
+      if (ok) done(); else { S.msg = { err: true, text: 'Copie impossible ici : appuie longuement sur le texte encadré pour le copier.' }; render(); }
+    };
+    try { navigator.clipboard.writeText(t).then(done, fallback); } catch (e) { fallback(); }
+  },
   genPwd: function () { S.opForm.password = genPassword(); render(); },
   saveOp: function () {
     var f = S.opForm;
-    run(call('saveOperateur', f), f.password ? 'Compte enregistré. Transmets l’e-mail et le mot de passe à l’opérateur.' : 'Compte enregistré.').then(function (l) {
-      S.ops = l; S.screen = S.stack.pop() || 'admin'; render();
+    var share = f.password ? { prenom: f.prenom, email: f.email, password: f.password, nouveau: !f.id } : null;
+    run(call('saveOperateur', f), f.password ? 'Compte enregistré.' : 'Compte enregistré.').then(function (l) {
+      S.ops = l; S.share = share; S.screen = S.stack.pop() || 'admin'; render(); window.scrollTo(0, 0);
     });
   }
 };
@@ -344,9 +364,11 @@ function loggedIn(r) {
 /* ============================== Écrans ============================== */
 function field(label, path, opt) {
   opt = opt || {};
-  var v = getPath(path);
-  return '<label>' + esc(label) + '<input type="' + (opt.type || 'text') + '"' + (opt.mode ? ' inputmode="' + opt.mode + '"' : '') +
-    (opt.auto ? ' autocomplete="' + opt.auto + '"' : '') + ' data-bind="' + path + '" value="' + esc(v) + '" placeholder="' + esc(opt.ph || '') + '"></label>';
+  var v = getPath(path), pw = opt.type === 'password', shown = pw && S.showPw[path];
+  var input = '<input type="' + (pw ? (shown ? 'text' : 'password') : (opt.type || 'text')) + '"' + (opt.mode ? ' inputmode="' + opt.mode + '"' : '') +
+    (opt.auto ? ' autocomplete="' + opt.auto + '"' : '') + (pw ? ' autocapitalize="off" spellcheck="false"' : '') + ' data-bind="' + path + '" value="' + esc(v) + '" placeholder="' + esc(opt.ph || '') + '">';
+  if (pw) input = '<span class="pw">' + input + '<button type="button" class="eye" data-act="togglePw" data-arg="' + path + '" aria-label="' + (shown ? 'Masquer' : 'Afficher') + ' le mot de passe">' + (shown ? ICON.eyeOff : ICON.eye) + '</button></span>';
+  return '<label>' + esc(label) + input + '</label>';
 }
 function getPath(p) { var o = S; p.split('.').forEach(function (k) { o = o ? o[k] : ''; }); return o === undefined || o === null ? '' : o; }
 function setPath(p, v) { var ks = p.split('.'), o = S; for (var i = 0; i < ks.length - 1; i++) o = o[ks[i]]; o[ks[ks.length - 1]] = v; }
@@ -387,7 +409,9 @@ var V = {
 
   home: function () {
     var q = S.search.trim().toLowerCase();
+    var mineCount = S.chantiers.filter(function (c) { return c.creePar === S.user.id; }).length;
     var list = S.chantiers.filter(function (c) {
+      if (S.mine && c.creePar !== S.user.id) return false;
       return !q || [c.client, c.adresse, c.ville, c.cp, c.projet, c.marque, c.modele].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     var pages = Math.max(1, Math.ceil(list.length / PAGE));
@@ -396,8 +420,10 @@ var V = {
     var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox();
     h += '<button class="btn" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Chantiers (' + S.chantiers.length + ')</div>';
+    h += chips([['0', 'Tous (' + S.chantiers.length + ')'], ['1', 'Mes chantiers (' + mineCount + ')']], S.mine ? '1' : '0', 'setMine');
     h += '<div class="search">' + ICON.search + '<input type="search" aria-label="Rechercher un chantier" placeholder="Client, ville, n° projet, machine…" data-bind="search" data-live="1" value="' + esc(S.search) + '"></div>';
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
+    else if (S.mine && !mineCount) h += '<div class="note center">Tu n’as encore créé aucun chantier. Les chantiers que tu crées apparaîtront ici.</div>';
     else if (!S.chantiers.length) h += '<div class="note center">Aucun chantier pour l’instant. Crée le premier avec « Nouveau chantier ».</div>';
     else if (!list.length) h += '<div class="note center">Aucun chantier ne correspond à « ' + esc(S.search) + ' ».</div>';
     var pager = pages > 1 ?
@@ -409,8 +435,8 @@ var V = {
     h += '<div id="list" style="display:flex;flex-direction:column;gap:10px">' + list.slice(start, start + PAGE).map(function (c) {
       return '<button class="item" data-act="openChantier" data-arg="' + esc(c.id) + '"><span class="top"><span class="badge">' + esc(c.type || '—') + '</span>' +
         '<span class="badge ' + (c.misEnService ? 'grey' : 'warn') + '">' + (c.misEnService ? 'MES ' + esc(c.dateMes) : 'À mettre en service') + '</span></span>' +
-        '<span style="font-size:18px;font-weight:700">' + esc(c.client || 'Sans nom') + '</span>' +
-        '<span class="note">' + esc([c.ville, c.projet].filter(Boolean).join(' · ')) + '</span>' +
+        '<span style="font-size:18px;font-weight:700">' + esc(c.client || 'Sans nom') + (c.projet ? ' · ' + esc(c.projet) : '') + '</span>' +
+        '<span class="note">' + esc([c.cp, c.ville].filter(Boolean).join(' ')) + '</span>' +
         '<span style="font-size:14px">' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'Unité extérieure à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</span></button>';
     }).join('') + '</div>';
     if (pages > 1) h += pager + '<div class="note center">' + list.length + ' chantiers' + (q ? ' trouvés' : '') + ' · ' + PAGE + ' par page</div>';
@@ -473,15 +499,15 @@ var V = {
     if (isAdmin()) h += '<button class="btn dark" data-act="goAdmin">Gestion des comptes</button>';
     h += '<div class="sec">Changer mon mot de passe</div><div class="card">' + field('Mot de passe actuel', 'pwd.oldPassword', { type: 'password', auto: 'current-password' }) +
       field('Nouveau mot de passe (8 caractères minimum)', 'pwd.newPassword', { type: 'password', auto: 'new-password' }) +
+      field('Confirme le nouveau mot de passe', 'pwd.confirm', { type: 'password', auto: 'new-password' }) +
       '<button class="btn out" data-act="changePassword">Enregistrer le nouveau mot de passe</button></div>' +
-      '<button class="btn out" data-act="logout" data-arg="switch">Changer d’opérateur</button>' +
       '<button class="btn danger" data-act="logout">Se déconnecter</button>' +
       '<div class="note">' + (isAdmin() ? 'Ton nom et ton attestation seront repris sur tes propres CERFA.' : 'Ton profil est tenu à jour par l’administrateur. Ton nom et ton numéro d’attestation sont repris sur tes CERFA.') + '</div>';
     return h;
   },
 
   admin: function () {
-    return msgBox() + '<button class="btn" data-act="newOp">' + ICON.plus + 'Créer un compte</button><div class="sec">Comptes (' + S.ops.length + ')</div>' +
+    return msgBox() + shareBox() + '<button class="btn" data-act="newOp">' + ICON.plus + 'Créer un compte</button><div class="sec">Comptes (' + S.ops.length + ')</div>' +
       S.ops.map(function (o) {
         return '<button class="item" data-act="editOp" data-arg="' + esc(o.id) + '"' + (o.actif ? '' : ' style="opacity:.6"') + '><span style="font-size:16px;font-weight:700">' + esc((o.prenom + ' ' + o.nom).trim() || 'Sans nom') + '</span>' +
           '<span class="note">' + esc(o.email || 'e-mail à renseigner') + (o.email2 ? ' · ' + esc(o.email2) : '') + '</span><span class="chips" style="gap:6px">' + (o.actif ? '' : '<span class="badge warn">Désactivé</span>') + '<span class="badge ' + (o.role === 'admin' ? '' : 'grey') + '">' + (o.role === 'admin' ? 'Admin' : 'Opérateur') + '</span>' +
@@ -517,6 +543,23 @@ var V = {
 
 /** Droits : l'administrateur agit sur tous les chantiers, un opérateur seulement sur ceux qu'il a créés. */
 function ownsChantier(c) { return !!(c && S.user && (S.user.role === 'admin' || c.creePar === S.user.id)); }
+var APP_ADDRESS = 'https://fluides.toumany.com';
+function shareText(x) {
+  return 'Bonjour' + (x.prenom ? ' ' + x.prenom : '') + ',\n' + (x.nouveau ? 'Ton compte ARE Fluides est créé.' : 'Ton mot de passe ARE Fluides a été changé.') + '\n\n' +
+    'Adresse : ' + APP_ADDRESS + '\nIdentifiant : ' + x.email + '\nMot de passe : ' + x.password + '\n\nTu pourras le changer dans ton profil (avatar en bas à droite).';
+}
+function shareBox() {
+  var x = S.share; if (!x) return '';
+  var t = shareText(x), u = encodeURIComponent(t);
+  return '<div class="card" style="gap:10px;border:2px solid var(--green)"><b>Identifiants à transmettre à ' + esc(x.prenom || x.email) + '</b>' +
+    '<div class="sharebox">' + esc(t) + '</div>' +
+    '<button class="btn" data-act="copyShare">Copier les identifiants</button>' +
+    '<div class="g3"><a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="https://wa.me/?text=' + u + '">WhatsApp</a>' +
+    '<a class="btn out" style="text-decoration:none" target="_blank" href="sms:?&body=' + u + '">SMS</a>' +
+    '<a class="btn out" style="text-decoration:none" target="_blank" href="mailto:' + encodeURIComponent(x.email) + '?subject=' + encodeURIComponent('Ton accès ARE Fluides') + '&body=' + u + '">E-mail</a></div>' +
+    '<div class="note">Le mot de passe n’est plus visible une fois cet encadré fermé : il est enregistré sous forme chiffrée.</div>' +
+    '<button class="btn ghost" data-act="closeShare">C’est transmis, fermer</button></div>';
+}
 function canDeleteChantier(c) { return ownsChantier(c) && !c.misEnService; }
 function deleteBlock(c) {
   if (!ownsChantier(c)) return '<div class="note" style="text-align:center">Seul l’opérateur qui a créé ce chantier ou un administrateur peut le supprimer.</div>';
