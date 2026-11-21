@@ -499,6 +499,7 @@ function listMachines_() {
       type: TYPES_INSTALL.indexOf(String(r['Type d’installation'])) >= 0 ? String(r['Type d’installation']) : '',
       liaison: String(r['Liaisons'] || ''), fluide: String(r['Fluide'] || '').toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R'),
       charge: dec(r['Charge usine (kg)']), precharge: dec(r['Longueur préchargée (m)']), gpm: dec(r['Charge supplémentaire (g/m)']),
+      phase: String(r['Alimentation'] || ''), kw: dec(r['Puissance chaud (kW)']), zones: dec(r['Zones max']),
       remarque: String(r['Remarque'] || ''), categorie: String(r['Catégorie'] || ''), appareil: String(r['Type d’appareil'] || ''), usage: String(r['Usage'] || '')
     };
   });
@@ -572,22 +573,42 @@ function extractReleve_(d) {
     '  "longueur": longueur des liaisons frigorifiques en mètres (nombre),',
     '  "precharge": longueur de précharge en mètres (nombre),',
     '  "gpm": charge complémentaire en grammes par mètre (nombre),',
+    '  "puissance": puissance de la PAC en kW si indiquée (nombre),',
+    '  "alimentation": "monophasé" ou "triphasé" si indiqué (installation électrique ou machine),',
+    '  "ecs": "oui" si la production d’eau chaude sanitaire par la PAC est prévue, "non" si elle est exclue, sinon "",',
+    '  "suggestions": jusqu’à 3 modèles de la LISTE DES MACHINES ci-dessous qui correspondent le mieux à l’installation décrite, du plus probable au moins probable, sous la forme [{"modele": "référence exacte de la liste", "raison": "courte justification"}] ; tiens compte de la marque, de la référence écrite (même incomplète ou mal orthographiée), du type d’installation, de la puissance, du monophasé/triphasé, de l’eau chaude sanitaire et du nombre de pièces ou de zones ; [] si rien ne correspond,',
     '  "illisible": liste des champs présents sur la feuille mais que tu n’as pas pu lire avec certitude',
     '}',
-    'Règles : mets "" pour toute information absente ou illisible ; ne devine jamais ; recopie les nombres sans unité, avec un point décimal.'
+    'Règles : mets "" pour toute information absente ou illisible ; ne devine jamais (sauf pour "suggestions", qui sont des propositions) ; recopie les nombres sans unité, avec un point décimal.'
   ].join('\n');
-  var text = callClaude_([block, { type: 'text', text: prompt }], 1200);
+  var machines = [];
+  try { machines = listMachines_(); } catch (e) { machines = []; }
+  if (machines.length) {
+    prompt += '\n\nLISTE DES MACHINES (modèle | marque | appareil | usage | type d’installation | alimentation | puissance chaud kW | gamme) :\n' +
+      machines.map(function (m) { return [m.modele, m.marque, m.appareil, m.usage, m.type, m.phase, m.kw, m.gamme].join(' | '); }).join('\n');
+  }
+  var text = callClaude_([block, { type: 'text', text: prompt }], 1800);
   var i = text.indexOf('{'), j = text.lastIndexOf('}');
   if (i < 0 || j < i) throw new Error('La feuille n’a pas pu être lue : réessaie avec une photo plus nette, bien à plat.');
   var raw;
   try { raw = JSON.parse(text.slice(i, j + 1)); } catch (e) { throw new Error('La feuille n’a pas pu être lue : réessaie avec une photo plus nette.'); }
-  var keys = ['prenom', 'nom', 'adresse', 'cp', 'ville', 'projet', 'type', 'marque', 'modele', 'fluide', 'longueur', 'precharge', 'gpm'];
+  var keys = ['prenom', 'nom', 'adresse', 'cp', 'ville', 'projet', 'type', 'marque', 'modele', 'fluide', 'longueur', 'precharge', 'gpm', 'puissance', 'alimentation', 'ecs'];
   var out = {};
   keys.forEach(function (k) { var v = raw[k]; out[k] = v === null || v === undefined ? '' : String(v).trim().slice(0, 200); });
   if (out.type && TYPES_INSTALL.indexOf(out.type) < 0) out.type = '';
   if (out.fluide) out.fluide = out.fluide.toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R');
   ['longueur', 'precharge', 'gpm'].forEach(function (k) { out[k] = out[k].replace('.', ','); });
   out.illisible = Array.isArray(raw.illisible) ? raw.illisible.map(String).slice(0, 15) : [];
+  // Modèles proposés : ceux choisis par Claude dans la liste, sinon un classement simple
+  var byKey = {};
+  machines.forEach(function (x) { byKey[normModele_(x.modele)] = x; });
+  var sugg = [];
+  (Array.isArray(raw.suggestions) ? raw.suggestions : []).forEach(function (sg) {
+    var x = sg && byKey[normModele_(sg.modele || sg)];
+    if (x && sugg.length < 3 && !sugg.some(function (y) { return y.modele === x.modele; })) sugg.push({ modele: x.modele, marque: x.marque, raison: String(sg.raison || '').slice(0, 160) });
+  });
+  if (!sugg.length) sugg = scoreMachines_(machines, out).slice(0, 3);
+  out.modeleLu = out.modele;
   // Complète avec la base des machines quand le modèle d'UE est reconnu
   var m = out.modele ? findMachine_(out.modele) : null;
   if (m) {
@@ -598,8 +619,31 @@ function extractReleve_(d) {
     if (!out.gpm && m.gpm) out.gpm = m.gpm;
     if (!out.type && m.type) out.type = m.type;
     out.machine = true;
+    sugg = [{ modele: m.modele, marque: m.marque, raison: 'Référence lue sur la feuille' }].concat(sugg.filter(function (y) { return y.modele !== m.modele; })).slice(0, 3);
   }
+  out.suggestions = sugg;
   return out;
+}
+
+/** Classement de secours : marque, type, alimentation, ECS et puissance la plus proche. */
+function scoreMachines_(machines, info) {
+  var marque = String(info.marque || '').toLowerCase(), kw = Number(String(info.puissance || '').replace(',', '.'));
+  var tri = /tri/i.test(info.alimentation || ''), mono = /mono/i.test(info.alimentation || '');
+  var scored = machines.map(function (m) {
+    var sc = 0;
+    if (marque && m.marque.toLowerCase().indexOf(marque) < 0 && marque.indexOf(m.marque.toLowerCase()) < 0) return null;
+    if (info.type) { if (m.type === info.type) sc += 4; else return null; }
+    if (tri && m.phase === 'Triphasé') sc += 2; if (tri && m.phase === 'Monophasé') sc -= 3;
+    if (mono && m.phase === 'Monophasé') sc += 1; if (mono && m.phase === 'Triphasé') sc -= 3;
+    if (info.ecs === 'oui' && /ECS/.test(m.usage) && !/selon/.test(m.usage)) sc += 1;
+    if (info.ecs === 'non' && /Chauffage seul/.test(m.usage)) sc += 1;
+    var p = Number(String(m.kw).replace(',', '.'));
+    if (kw && p) sc -= Math.abs(p - kw) / 2;
+    return { m: m, sc: sc };
+  }).filter(Boolean);
+  if (!marque && !info.type && !kw) return [];
+  scored.sort(function (a, b) { return b.sc - a.sc; });
+  return scored.map(function (x) { return { modele: x.m.modele, marque: x.m.marque, raison: 'Proposé d’après la marque, le type et la puissance' }; });
 }
 
 /** À lancer une fois depuis l'éditeur (▶ Exécuter) : autorise les appels externes et vérifie la clé. */

@@ -168,13 +168,12 @@ function findMachine(modele) {
   return S.machines.filter(function (m) { return normModele(m.modele) === k; })[0] || null;
 }
 /** Modèle reconnu dans la base : remplit marque, fluide, précharge, g/m et type. */
-function applyMachine(f, m) {
-  f.modele = m.modele;
+function applyMachine(f, m, seulementVides) {
+  var put = function (k, v) { if (v && (!seulementVides || !f[k])) f[k] = v; };
+  f.modele = m.modele; f._modeleAutre = false; f._marqueAutre = false;
   if (m.marque) f.marque = m.marque;
-  if (m.precharge) f.precharge = m.precharge;
-  if (m.gpm) f.gpm = m.gpm;
-  if (m.type) f.type = m.type;
-  if (m.fluide) {
+  put('precharge', m.precharge); put('gpm', m.gpm); put('type', m.type);
+  if (m.fluide && (!seulementVides || !formFluid(f))) {
     if (MAIN_FLUIDS.indexOf(m.fluide) >= 0) { f.fluideChoix = m.fluide; f.fluideAutre = ''; }
     else { f.fluideChoix = 'Autre'; f.fluideAutre = m.fluide; }
     f.gwpManuel = '';
@@ -187,11 +186,22 @@ function brands() {
 }
 function brandMatch(b) { b = String(b || '').trim().toLowerCase(); return b ? brands().filter(function (x) { return x.toLowerCase() === b; })[0] || '' : ''; }
 /** Unité extérieure : d'abord la marque, puis le modèle de cette marque ; le choix du modèle remplit le reste. */
+function suggBox(f) {
+  if (!f._sugg || !f._sugg.length) return '';
+  return '<div class="msg" style="margin:0;display:flex;flex-direction:column;gap:8px"><b>Modèles proposés d’après la feuille de relevé</b>' +
+    (f._modeleLu && !findMachine(f._modeleLu) ? '<span style="font-size:13px">Lu sur la feuille : « ' + esc(f._modeleLu) + ' ». Vérifie sur la plaque de l’unité extérieure.</span>' : '') +
+    f._sugg.map(function (x, i) {
+      var on = x.modele === f.modele;
+      return '<button type="button" class="chip' + (on ? ' on' : '') + '" data-act="pickSugg" data-arg="' + esc(x.modele) + '" style="text-align:left;height:auto;padding:8px 14px;border-radius:12px">' +
+        esc(x.marque + ' ' + x.modele) + (i === 0 ? ' · le plus probable' : '') + (x.raison ? '<br><span style="font-weight:400;font-size:13px">' + esc(x.raison) + '</span>' : '') + '</button>';
+    }).join('') + '</div>';
+}
 function ueFields(f) {
   if (!S.machines.length) return field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) + field('Modèle', 'form.modele', { ph: 'Ex. ERGA04EV' });
+  var top = suggBox(f);
   var bm = f._marqueAutre ? '' : brandMatch(f.marque);
   var bSel = f._marqueAutre || (f.marque && !bm) ? 'Autre' : bm;
-  var html = '<label>Marque<select data-bind="form._marqueSel">' +
+  var html = top + '<label>Marque<select data-bind="form._marqueSel">' +
     ['<option value="">Choisir la marque…</option>'].concat(brands().map(function (b) { return '<option' + (b === bSel ? ' selected' : '') + '>' + esc(b) + '</option>'; }))
       .concat('<option value="Autre"' + (bSel === 'Autre' ? ' selected' : '') + '>Autre marque…</option>').join('') + '</select></label>';
   if (bSel === 'Autre') return html + field('Nom de la marque', 'form.marque', { ph: 'Ex. Atlantic' }) + field('Modèle', 'form.modele', { ph: 'Référence de l’unité extérieure' });
@@ -235,6 +245,7 @@ var A = {
     S.msg = arg === 'switch' ? { text: 'Changement d’opérateur : le nouvel opérateur se connecte avec son e-mail et son mot de passe.' } : null;
     render();
   },
+  pickSugg: function (mod) { var m = findMachine(mod); if (m) applyMachine(S.form, m); render(); },
   pickReleve: function () { var i = document.getElementById('releveInput'); if (i) i.click(); },
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
@@ -536,6 +547,10 @@ function applyReleve(r) {
     f.gwpManuel = '';
   }
   f._lu = { n: n, illisible: r.illisible || [] };
+  f._sugg = (r.suggestions || []).filter(function (x) { return findMachine(x.modele); });
+  f._modeleLu = r.modeleLu || '';
+  // Pas de référence exacte : on présélectionne le modèle le plus probable, sans écraser ce qui a été lu
+  if (!findMachine(f.modele) && f._sugg.length) applyMachine(f, findMachine(f._sugg[0].modele), true);
 }
 document.addEventListener('change', function (e) {
   if (e.target.id !== 'releveInput') return;
