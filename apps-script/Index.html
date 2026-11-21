@@ -351,7 +351,7 @@ var A = {
   },
   goAdmin: function () { go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
   newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', email2: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
-  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, email2: o.email2 || '', role: o.role, attestation: o.attestation, password: '', actif: o.actif, appareils: o.appareils, derniereUtilisation: o.derniereUtilisation }; go('opForm'); },
+  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, email2: o.email2 || '', role: o.role, attestation: o.attestation, password: '', actif: o.actif, appareils: o.appareils, derniereUtilisation: o.derniereUtilisation, attestationChargee: o.attestationChargee, attestationDate: o.attestationDate }; go('opForm'); },
   toggleActif: function () {
     var f = S.opForm, on = !f.actif;
     run(call('setOperateurActif', { id: f.id, actif: on }), on ? 'Compte réactivé.' : 'Compte désactivé : il ne peut plus se connecter.').then(function (l) { S.ops = l; f.actif = on; render(); });
@@ -462,7 +462,7 @@ var V = {
     var pages = Math.max(1, Math.ceil(list.length / PAGE));
     if (S.page >= pages) S.page = pages - 1;
     var page = S.page, start = page * PAGE;
-    var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox();
+    var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox() + attBanner();
     h += '<button class="btn" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Chantiers</div>';
     h += '<div class="years" id="years" role="radiogroup" aria-label="Année des chantiers">' +
@@ -563,7 +563,8 @@ var V = {
         return '<button class="item" data-act="editOp" data-arg="' + esc(o.id) + '"' + (o.actif ? '' : ' style="opacity:.6"') + '><span style="font-size:16px;font-weight:700">' + esc((o.prenom + ' ' + o.nom).trim() || 'Sans nom') + '</span>' +
           '<span class="note">' + esc(o.email || 'e-mail à renseigner') + (o.email2 ? ' · ' + esc(o.email2) : '') + '</span><span class="chips" style="gap:6px">' + (o.actif ? '' : '<span class="badge warn">Désactivé</span>') + '<span class="badge ' + (o.role === 'admin' ? '' : 'grey') + '">' + (o.role === 'admin' ? 'Admin' : 'Opérateur') + '</span>' +
           '<span class="badge ' + (o.hasPassword ? '' : 'warn') + '">' + (o.hasPassword ? 'Peut se connecter' : 'Mot de passe à définir') + '</span>' +
-          '<span class="badge ' + (o.attestation ? '' : 'warn') + '">' + (o.attestation ? 'Attestation ' + esc(o.attestation) : 'Attestation à renseigner') + '</span></span></button>';
+          '<span class="badge ' + (o.attestation ? '' : 'warn') + '">' + (o.attestation ? 'Attestation ' + esc(o.attestation) : 'N° d’attestation à renseigner') + '</span>' +
+          '<span class="badge ' + (o.attestationChargee ? '' : 'warn') + '">' + (o.attestationChargee ? 'Fichier chargé' : 'Fichier à charger') + '</span></span></button>';
       }).join('') + '<div class="note">Les opérateurs ne peuvent pas créer de compte. Tu crées chaque compte avec son e-mail et son mot de passe, puis tu le lui transmets.</div>';
   },
 
@@ -576,7 +577,8 @@ var V = {
       '<div class="note">Rôle</div>' + chips([['operateur', 'Opérateur'], ['admin', 'Admin']], f.role, 'setRole') + '</div>' +
       '<div class="sec">Profil</div><div class="card"><div class="g2">' + field('Prénom', 'opForm.prenom') + field('Nom', 'opForm.nom') + '</div>' +
       field('N° d’attestation d’aptitude', 'opForm.attestation') +
-      '<div class="note">Le dépôt du fichier de l’attestation arrive avec la livraison 3. En attendant, garde-le dans le dossier Drive « Opérateurs ».</div></div>' +
+      '</div><div class="sec">Attestation d’aptitude</div><div class="card">' + (f.id ? attStatus(f.attestationChargee, f.attestationDate) + attButtons(f.id) +
+        '<div class="note">Photo ou PDF, rangé dans ton Drive (ARE Fluides › Opérateurs), jamais affiché dans l’appli.</div>' : '<div class="note">Tu pourras charger le fichier de l’attestation une fois le compte enregistré. L’opérateur peut aussi le faire depuis son profil.</div>') + '</div>' +
       '<button class="btn" data-act="saveOp"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le compte') + '</button>' +
       (f.id && f.id !== S.user.id ?
         '<div class="sec" style="margin-top:12px">Gérer ce compte</div>' +
@@ -1213,7 +1215,7 @@ function initSig() {
 function render() {
   var scr = S.screen, logged = !!S.user;
   var showHeader = scr !== 'login' && scr !== 'setup';
-  var title = scr === 'chantierForm' ? (S.form && S.form.id ? 'Modifier le chantier' : 'Nouveau chantier') : (scr === 'opForm' && S.opForm && !S.opForm.id ? 'Nouveau compte' : TITLES[scr]);
+  var title = scr === 'chantierForm' ? (S.form && S.form.id ? 'Modifier le chantier' : 'Nouveau chantier') : (scr === 'opForm' && S.opForm && !S.opForm.id ? 'Nouveau compte' : scr === 'bottleForm' ? (S.bf && S.bf.original ? 'Modifier la bouteille' : 'Nouvelle bouteille') : TITLES[scr]);
   var html = '';
   if (showHeader) {
     html += '<header>' + (S.stack.length ? '<button class="ib" aria-label="Retour" data-act="back">' + ICON.back + '</button>' : '') +
@@ -1221,10 +1223,10 @@ function render() {
       (logged && scr !== 'home' ? '<button class="ib" aria-label="Accueil" data-act="home">' + ICON.home + '</button>' : '') + '</header>';
   }
   html += '<main>' + (V[scr] ? V[scr]() : '') + '</main>';
-  if (logged && (scr === 'home' || scr === 'profile' || scr === 'admin')) {
+  if (logged && /^(home|profile|admin|bottles|bottle|detecteurs|distributeurs|declaration)$/.test(scr)) {
     html += '<nav><div class="in"><button class="tab' + (scr === 'home' ? ' on' : '') + '" data-act="home">Accueil</button>' +
-      '<button class="tab" data-act="goBottles">Bouteilles</button>' +
-      '<button class="avatar' + (scr === 'profile' ? ' on' : '') + '" aria-label="Mon profil" data-act="goProfile">' + esc(initials(S.user)) + '</button></div></nav>';
+      '<button class="tab' + (/^bottle/.test(scr) ? ' on' : '') + '" data-act="goBottles">Bouteilles</button>' +
+      '<button class="avatar' + (/^(profile|admin|detecteurs|distributeurs|declaration)$/.test(scr) ? ' on' : '') + '" aria-label="Mon profil" data-act="goProfile">' + esc(initials(S.user)) + '</button></div></nav>';
   }
   var focused = document.activeElement && document.activeElement.getAttribute('data-bind');
   document.getElementById('app').innerHTML = html;
@@ -1273,6 +1275,338 @@ window.addEventListener('mouseup', function () {
       Array.prototype.forEach.call(box.querySelectorAll('.yr'), function (b) { var x = Math.abs(b.offsetLeft + b.offsetWidth / 2 - mid); if (x < d) { d = x; best = b; } });
       if (best) box.scrollTo({ left: best.offsetLeft + best.offsetWidth / 2 - box.clientWidth / 2, behavior: 'smooth' });
     }
+});
+
+/* ============================== Livraison 3 : profil, bouteilles, détecteurs, distributeurs, déclaration ============================== */
+Object.assign(ICON, {
+  detector: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="9" width="10" height="12" rx="2"/><path d="M12 9V3M10 3h4M10 14h4"/></svg>',
+  doc: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>',
+  depot: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10l8-6 8 6v10z"/><path d="M9 20v-5h6v5"/></svg>',
+  bottle: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2h4v3h-4z"/><path d="M8 8a4 3 0 0 1 8 0v12a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2z"/></svg>',
+  file: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4"/></svg>'
+});
+Object.assign(TITLES, {
+  profileEdit: 'Modifier mon profil', bottles: 'Bouteilles', bottle: 'Fiche bouteille', bottleForm: 'Bouteille',
+  detecteurs: 'Détecteurs de fuite', distributeurs: 'Distributeurs', declaration: 'Déclaration annuelle'
+});
+var KINDS = [['neuve', 'Neuve'], ['recup', 'Récupération'], ['transfert', 'Transfert']];
+
+function adminCard(act, icon, title, sub, subStyle) {
+  return '<button class="admincard" data-act="' + act + '"><span style="display:flex;flex:0 0 auto">' + icon + '</span><span style="flex:1;min-width:0"><b style="font-size:16px">' + esc(title) + '</b>' +
+    '<small' + (subStyle ? ' style="' + subStyle + '"' : '') + '>' + esc(sub) + '</small></span><span aria-hidden="true" style="font-size:22px">›</span></button>';
+}
+function attBanner() {
+  var u = S.user;
+  if (!u || u.attestationChargee) return '';
+  return '<button class="msg err" data-act="goProfileEdit" style="border:0;text-align:left;width:100%;cursor:pointer">Ton attestation n’est pas encore chargée. Ajoute-la dans ton profil →</button>';
+}
+function attButtons(target) {
+  var busy = S.attBusy === (target || 'me');
+  if (busy) return '<div class="note" style="display:flex;align-items:center;gap:10px"><span class="spin" style="width:20px;height:20px;margin:0"></span>Envoi de l’attestation…</div>';
+  return '<div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="pickAtt" data-arg="cam|' + esc(target || '') + '">' + ICON.camera + 'Photo</button>' +
+    '<button type="button" class="btn out" style="min-height:46px" data-act="pickAtt" data-arg="file|' + esc(target || '') + '">' + ICON.file + 'Fichier</button></div>' +
+    '<input type="file" id="attCam" accept="image/*" capture="environment" class="hidden"><input type="file" id="attFile" accept="image/*,application/pdf" class="hidden">';
+}
+function attStatus(ok, date) {
+  return ok ? '<div class="msg ok" style="margin:0">Attestation chargée' + (date ? ' le ' + esc(date) : '') + '.</div>'
+    : '<div class="msg err" style="margin:0">Attestation pas encore chargée.</div>';
+}
+
+V.profile = function () {
+  var u = S.user, sm = S.summary || {};
+  var h = msgBox() + '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><span class="avatar on" style="display:flex;align-items:center;justify-content:center">' + esc(initials(u)) + '</span>' +
+    '<span><b style="font-size:18px">' + esc(u.prenom + ' ' + u.nom) + '</b><br><span class="note">' + (u.role === 'admin' ? 'Administrateur' : 'Opérateur fluides') + '</span></span></div>' +
+    '<div class="rows"><div class="row"><span>E-mail</span><span>' + esc(u.email) + '</span></div>' + (u.email2 ? '<div class="row"><span>E-mail secondaire</span><span>' + esc(u.email2) + '</span></div>' : '') +
+    '<div class="row"><span>N° d’attestation</span><span>' + esc(u.attestation || '—') + '</span></div>' +
+    '<div class="row"><span>Attestation</span><span' + (u.attestationChargee ? '' : ' style="color:var(--warn)"') + '>' + (u.attestationChargee ? 'Chargée' + (u.attestationDate ? ' le ' + esc(u.attestationDate) : '') : 'Non chargée') + '</span></div></div>';
+  if (isAdmin()) {
+    var n = function (x, s, p) { return x === undefined ? '…' : x + ' ' + (x > 1 ? p : s); };
+    h += adminCard('goAdmin', ICON.users, 'Gestion des comptes', sm.comptes === undefined ? '…' : n(sm.comptes, 'compte', 'comptes') + ' · admin') +
+      adminCard('goDetecteurs', ICON.detector, 'Détecteurs de fuite', sm.detecteursAFaire ? sm.detecteursAFaire + ' contrôle' + (sm.detecteursAFaire > 1 ? 's' : '') + ' à faire' : n(sm.detecteurs, 'détecteur à jour', 'détecteurs à jour'),
+        sm.detecteursAFaire ? 'color:#F4B48A;font-weight:600' : '') +
+      adminCard('goDecl', ICON.doc, 'Faire ma déclaration annuelle', 'Chiffres ' + (sm.annee || new Date().getFullYear() - 1) + ' prêts à reporter') +
+      adminCard('goDistributeurs', ICON.depot, 'Distributeurs', n(sm.distributeurs, 'site de reprise des bouteilles', 'sites de reprise des bouteilles'));
+  }
+  h += '<button class="btn out" data-act="goProfileEdit">Modifier mon profil</button>' +
+    '<button class="btn danger" data-act="logout">Se déconnecter</button>' +
+    '<div class="note">' + (isAdmin() ? 'Ton nom et ton numéro d’attestation sont repris sur tes propres CERFA.' : 'Ton nom et ton numéro d’attestation sont repris sur tes CERFA.') + '</div>';
+  return h;
+};
+
+V.profileEdit = function () {
+  var u = S.user;
+  return msgBox() + '<div class="sec">Profil</div><div class="card"><div class="g2">' + field('Prénom', 'prof.prenom') + field('Nom', 'prof.nom') + '</div>' +
+    field('N° d’attestation d’aptitude', 'prof.attestation', { ph: 'Ex. SQ023828-001' }) +
+    '<button class="btn" data-act="saveProfile"' + (S.busy ? ' disabled' : '') + '>Enregistrer</button></div>' +
+    '<div class="sec">Attestation d’aptitude</div><div class="card">' + attStatus(u.attestationChargee, u.attestationDate) +
+    '<div class="note">Photo ou PDF de ton attestation. Le fichier est rangé dans le Drive de l’entreprise (dossier ARE Fluides › Opérateurs) et n’est jamais affiché dans l’appli : il contient des données personnelles.' +
+    (u.attestationChargee ? ' Un nouvel envoi remplace l’ancien fichier.' : '') + '</div>' + attButtons('') + '</div>' +
+    '<div class="sec">Changer mon mot de passe</div><div class="card">' + field('Mot de passe actuel', 'pwd.oldPassword', { type: 'password', auto: 'current-password', noEye: true }) +
+    field('Nouveau mot de passe (8 caractères minimum)', 'pwd.newPassword', { type: 'password', auto: 'new-password' }) +
+    field('Confirme le nouveau mot de passe', 'pwd.confirm', { type: 'password', auto: 'new-password' }) +
+    '<button class="btn out" data-act="changePassword">Enregistrer le nouveau mot de passe</button></div>';
+};
+
+/* ---------- Bouteilles */
+function bottleItem(b) {
+  return '<button class="item" data-act="openBottle" data-arg="' + esc(b.ref) + '"><span class="top"><span class="chips" style="gap:6px"><span class="badge' + (b.kind === 'neuve' ? '' : ' grey') + '">' + esc(b.type) + '</span>' +
+    (b.fluide ? '<span class="badge grey">' + esc(b.fluide) + '</span>' : '') + '</span><span class="note">' + (b.statut === 'rendue' ? 'Rendue' + (b.dateRetour ? ' le ' + esc(b.dateRetour) : '') : 'Au dépôt') + '</span></span>' +
+    '<span style="font-size:18px;font-weight:700">' + esc(b.ref) + '</span>' +
+    '<span style="font-size:14px">' + (b.reste ? esc(b.reste) + ' kg de fluide' + (b.statut === 'rendue' ? ' au retour' : '') : (b.vide ? 'Vide' : 'Poids à vide à renseigner')) + (b.distributeurNom && b.statut === 'rendue' ? ' · ' + esc(b.distributeurNom) : '') + '</span></button>';
+}
+V.bottles = function () {
+  var d = S.bt;
+  if (!d) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  var tab = S.btTab || 'depot', list = d.bouteilles.filter(function (b) { return b.statut === tab; });
+  var order = { neuve: 0, transfert: 1, recup: 2 };
+  list.sort(function (a, b) { return tab === 'depot' ? (order[a.kind] - order[b.kind] || a.ref.localeCompare(b.ref)) : (frToIso(b.dateRetour) || '').localeCompare(frToIso(a.dateRetour) || ''); });
+  var cnt = function (s) { return d.bouteilles.filter(function (b) { return b.statut === s; }).length; };
+  return msgBox() + '<div class="g2"><div class="card" style="gap:4px"><span class="note">Fluide neuf en stock</span><b style="font-size:22px">' + esc(d.totals.neuf) + ' kg</b></div>' +
+    '<div class="card" style="gap:4px"><span class="note">Fluide récupéré au dépôt</span><b style="font-size:22px">' + esc(d.totals.recup) + ' kg</b></div></div>' +
+    (isAdmin() ? '<button class="btn" data-act="newBottle">' + ICON.plus + 'Ajouter une bouteille</button>' : '') +
+    '<div class="g2">' + [['depot', 'Au dépôt'], ['rendue', 'Rendues']].map(function (t) {
+      return '<button type="button" class="btn ' + (tab === t[0] ? 'dark' : 'out') + '" style="min-height:46px" data-act="btTab" data-arg="' + t[0] + '">' + t[1] + ' (' + cnt(t[0]) + ')</button>';
+    }).join('') + '</div>' +
+    (list.length ? list.map(bottleItem).join('') : '<div class="note center">Aucune bouteille dans cette liste.</div>') +
+    '<div class="note">Fluide restant = dernière pesée moins poids à vide, mis à jour à chaque manipulation. Touche une bouteille pour voir sa fiche.' + (isAdmin() ? '' : ' Les bouteilles sont ajoutées et rendues par l’administrateur.') + '</div>';
+};
+
+V.bottle = function () {
+  var b = S.btD;
+  if (!b) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  var kg = function (v) { return v ? esc(v) + ' kg' : '<span style="color:var(--warn)">à renseigner</span>'; };
+  var rows = [['Type', esc(b.type)], ['Fluide', b.fluide ? esc(b.fluide) : 'pas encore de fluide'], ['Poids à vide', kg(b.vide)]];
+  if (b.kind === 'neuve') rows.push(['Poids plein à l’achat', kg(b.plein)], ['Fluide à l’achat', kg(b.initial)]);
+  rows.push(['Dernière pesée', kg(b.pesee)], ['Fluide restant', b.reste ? esc(b.reste) + ' kg' : '—']);
+  if (b.dateEntree) rows.push([b.kind === 'neuve' ? 'Date d’achat' : 'Date d’entrée', esc(b.dateEntree)]);
+  if (b.fournisseur) rows.push(['Fournisseur', esc(b.fournisseur)]);
+  var h = msgBox() + '<div class="card" style="gap:6px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b style="font-size:20px">' + esc(b.ref) + '</b>' +
+    '<span class="badge' + (b.statut === 'rendue' ? ' grey' : '') + '">' + esc(b.statutLabel) + '</span></div><span class="note">' + esc(b.type + (b.fluide ? ' · ' + b.fluide : '')) + '</span></div>' +
+    '<div class="sec">Caractéristiques</div><div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + r[1] + '</span></div>'; }).join('') + '</div>';
+  h += '<div class="sec">Statut</div>';
+  if (isAdmin()) {
+    var f = S.btSt;
+    h += '<div class="card"><div class="g2">' + [['depot', 'Au dépôt'], ['rendue', 'Rendue au distributeur']].map(function (c) {
+      return '<button type="button" class="btn ' + (f.statut === c[0] ? '' : 'out') + '" style="min-height:50px" data-act="btStatut" data-arg="' + c[0] + '">' + c[1] + '</button>';
+    }).join('') + '</div>';
+    if (f.statut === 'rendue') {
+      h += '<div class="note">Distributeur (site de reprise)</div>' + (S.bt && S.bt.distributeurs.length ? S.bt.distributeurs.map(function (x) {
+        var on = f.distributeur === x.id;
+        return '<button type="button" class="item" style="flex-direction:row;align-items:center;justify-content:space-between;padding:12px 14px;border:' + (on ? '2px solid var(--green)' : '1.5px solid var(--line)') + '" data-act="btDist" data-arg="' + esc(x.id) + '">' +
+          '<span><b>' + esc(x.nom) + '</b><br><span class="note">' + (x.siret ? 'SIRET ' + esc(x.siret) : 'SIRET à renseigner') + '</span></span><span class="badge' + (on ? '' : ' grey') + '">' + (on ? 'Choisi' : 'Choisir') + '</span></button>';
+      }).join('') : '<div class="msg err">Ajoute d’abord un distributeur (Profil › Distributeurs).</div>') +
+        '<label>Date de retour<input type="date" max="' + todayIso() + '" data-bind="btSt.dateRetour" value="' + esc(f.dateRetour) + '"></label>' +
+        field('N° du BSFF (Trackdéchets, facultatif)', 'btSt.bsff') +
+        '<button class="btn" data-act="saveBtStatut"' + (S.busy ? ' disabled' : '') + '>' + (b.statut === 'rendue' ? 'Enregistrer le retour' : 'Enregistrer le retour au distributeur') + '</button>';
+    } else if (b.statut === 'rendue') {
+      h += '<button class="btn" data-act="saveBtStatut"' + (S.busy ? ' disabled' : '') + '>Remettre au dépôt</button>';
+    }
+    h += '<div class="note">Au dépôt : la bouteille peut être choisie lors d’une manipulation. Rendue : elle compte dans la ligne « remise aux fournisseurs » de la déclaration annuelle.</div></div>';
+  } else {
+    h += '<div class="rows"><div class="row"><span>Statut</span><span>' + esc(b.statutLabel) + '</span></div>' +
+      (b.statut === 'rendue' ? '<div class="row"><span>Distributeur</span><span>' + esc(b.distributeurNom || '—') + '</span></div><div class="row"><span>Date de retour</span><span>' + esc(b.dateRetour || '—') + '</span></div>' : '') + '</div>';
+  }
+  h += '<div class="sec">Historique</div>' + (b.hist.length ? '<div class="rows">' + b.hist.map(function (x) {
+    return '<div class="row"><span>' + esc(x.date || '—') + ' · ' + esc(x.op) + (x.client ? '<br><span style="font-size:13px">' + esc(x.client) + (x.cerfa ? ' · ' + esc(x.cerfa) : '') + '</span>' : '') + '</span><span>' + (x.qty ? esc(x.qty) + ' kg' : '') + '</span></div>';
+  }).join('') + '</div>' : '<div class="note">Aucun mouvement enregistré.</div>');
+  if (isAdmin()) {
+    h += '<button class="btn out" data-act="editBottle">Modifier les caractéristiques</button>';
+    if (!b.utilisee) h += S.confirmBottle
+      ? '<div class="msg err">Supprimer la bouteille ' + esc(b.ref) + ' ? (une copie est gardée dans le tableur)</div><div class="g2"><button class="btn out" data-act="cancelDelBottle">Annuler</button><button class="btn danger" data-act="delBottle">Oui, supprimer</button></div>'
+      : '<button class="btn danger" data-act="askDelBottle">Supprimer cette bouteille</button><div class="note">Possible tant qu’elle n’a servi à aucune manipulation (erreur de saisie).</div>';
+  }
+  return h;
+};
+
+function bfInitial() { var f = S.bf, x = numOrNaN(f.plein) - numOrNaN(f.vide); return isFinite(x) && x > 0 ? frNum(x) + ' kg' : '—'; }
+V.bottleForm = function () {
+  var f = S.bf, neuve = f.kind === 'neuve';
+  var fl = (S.bt && S.bt.fluides.length ? S.bt.fluides : MAIN_FLUIDS);
+  return msgBox() + '<div class="card">' + field('Référence de la bouteille *', 'bf.ref', { ph: 'Ex. R32_03482' }) +
+    '<div class="note">Type de bouteille</div>' + chips(KINDS, f.kind, 'setBfKind') +
+    '<label>Fluide' + (neuve ? ' *' : '') + '<select data-bind="bf.fluide"><option value="">' + (neuve ? 'Choisir…' : 'Pas encore de fluide (bouteille vide)') + '</option>' +
+    fl.map(function (c) { return '<option value="' + esc(c) + '"' + (c === f.fluide ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></label>' +
+    '<div class="g2">' + field('Poids à vide (kg) *', 'bf.vide', { mode: 'decimal', ph: 'Tare' }) + (neuve ? field('Poids plein à l’achat (kg) *', 'bf.plein', { mode: 'decimal' }) : '<span></span>') + '</div>' +
+    (neuve ? '<div class="rows" style="padding:0 4px"><div class="row"><span>Poids initial du fluide</span><span id="bfInit">' + bfInitial() + '</span></div></div>' : '') +
+    field(f.original ? 'Dernière pesée (kg)' : 'Pesée actuelle (kg), si la bouteille a déjà servi', 'bf.pesee', { mode: 'decimal', ph: neuve ? 'Vide = bouteille pleine' : 'Vide = bouteille vide' }) +
+    '<label>Fournisseur<input list="fournList" data-bind="bf.fournisseur" value="' + esc(f.fournisseur) + '" placeholder="Ex. Climalife, Rexel…"><datalist id="fournList">' +
+    (S.bt ? S.bt.fournisseurs.concat(S.bt.distributeurs.map(function (x) { return x.nom; })) : []).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></label>' +
+    '<label>' + (neuve ? 'Date d’achat' : 'Date d’entrée au dépôt') + '<input type="date" max="' + todayIso() + '" data-bind="bf.dateEntree" value="' + esc(f.dateEntree) + '"></label>' +
+    (neuve ? '<div class="note">L’achat d’une bouteille neuve compte dans la ligne « quantité acquise » de la déclaration annuelle de l’année d’achat.</div>' : '') + '</div>' +
+    '<button class="btn" data-act="saveBottle"' + (S.busy ? ' disabled' : '') + '>Enregistrer la bouteille</button>';
+};
+
+/* ---------- Détecteurs */
+V.detecteurs = function () {
+  var l = S.dets, f = S.detF;
+  if (!l) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  return msgBox() + (l.length ? l.map(function (d) {
+    return '<div class="card" style="gap:6px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b>' + esc([d.marque, d.ref].filter(Boolean).join(' ') || 'Détecteur') + '</b>' +
+      '<span class="badge' + (d.ok ? '' : ' warn') + '">' + (d.ok ? 'À jour' : 'À contrôler') + '</span></div>' +
+      '<span class="note">' + (d.serie ? 'N° de série ' + esc(d.serie) + ' · ' : '') + (d.dernierControle ? 'contrôlé le ' + esc(d.dernierControle) : 'date de contrôle à renseigner') + '</span>' +
+      '<span style="font-size:13px;' + (d.ok ? 'color:var(--muted)' : 'color:var(--warn);font-weight:600') + '">' + (d.prochainControle ? (d.ok ? 'Prochain contrôle avant le ' : 'Contrôle dépassé depuis le ') + esc(d.prochainControle) : '') + '</span>' +
+      '<button type="button" class="chip" style="align-self:flex-start" data-act="editDet" data-arg="' + esc(d.id) + '">Modifier</button></div>';
+  }).join('') : '<div class="note center">Aucun détecteur.</div>') +
+    '<div class="sec">' + (f.id ? 'Modifier le détecteur' : 'Ajouter un détecteur') + '</div><div class="card">' +
+    '<div class="g2">' + field('Marque', 'detF.marque', { ph: 'Ex. MASTERCOOL' }) + field('Modèle', 'detF.reference', { ph: 'Ex. 55800' }) + '</div>' +
+    field('N° de série', 'detF.serie') +
+    '<label>Date du dernier contrôle<input type="date" max="' + todayIso() + '" data-bind="detF.dernierControle" value="' + esc(f.dernierControle) + '"></label>' +
+    '<button class="btn" data-act="saveDet"' + (S.busy ? ' disabled' : '') + '>' + (f.id ? 'Enregistrer les modifications' : 'Ajouter le détecteur') + '</button>' +
+    (f.id ? '<button class="btn ghost" data-act="newDet">Annuler</button>' : '') + '</div>' +
+    '<div class="note">Le contrôle des détecteurs est annuel. Un détecteur dont le contrôle est dépassé ne peut plus être choisi lors d’une mise en service. Après le contrôle, mets à jour sa date ici.</div>';
+};
+
+/* ---------- Distributeurs */
+V.distributeurs = function () {
+  var l = S.dists, f = S.distF;
+  if (!l) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  return msgBox() + '<div class="note">Sites à qui vous rendez les bouteilles de récupération. Ils servent à remplir la case [13] du CERFA, les bouteilles rendues et la déclaration annuelle.</div>' +
+    l.map(function (d) {
+      return '<div class="card" style="gap:4px"><b>' + esc(d.nom) + '</b><span class="note">' + (d.siret ? 'SIRET ' + esc(d.siret) : '<span style="color:var(--warn)">SIRET à renseigner</span>') + '</span>' +
+        (d.adresse ? '<span class="note">' + esc(d.adresse) + '</span>' : '') + '<button type="button" class="chip" style="align-self:flex-start;margin-top:6px" data-act="editDist" data-arg="' + esc(d.id) + '">Modifier</button></div>';
+    }).join('') +
+    '<div class="sec">' + (f.id ? 'Modifier le distributeur' : 'Ajouter un distributeur') + '</div><div class="card">' +
+    field('Nom', 'distF.nom', { ph: 'Ex. agence du distributeur' }) + field('SIRET', 'distF.siret', { mode: 'numeric', ph: '14 chiffres' }) + field('Adresse du site', 'distF.adresse', { ph: 'Rue, code postal, ville' }) +
+    '<button class="btn" data-act="saveDist"' + (S.busy ? ' disabled' : '') + '>' + (f.id ? 'Enregistrer les modifications' : 'Ajouter le distributeur') + '</button>' +
+    (f.id ? '<button class="btn ghost" data-act="newDist">Annuler</button>' : '') + '</div>';
+};
+
+/* ---------- Déclaration annuelle */
+function declDone() { try { return JSON.parse(load('are_decl_' + S.declYear) || '{}'); } catch (e) { return {}; } }
+V.declaration = function () {
+  var d = S.decl;
+  if (!d) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  var h = msgBox() + chips(d.annees.map(function (y) { return [String(y), String(y)]; }), String(d.annee), 'declYear') +
+    '<div class="card" style="gap:4px"><b>Année ' + d.annee + '</b><span class="note">Du 01/01/' + d.annee + ' au 31/12/' + d.annee + ' · calculé depuis le registre des mouvements et le stock de bouteilles. Mêmes rubriques et même ordre que sur le site SOCOTEC.</span></div>';
+  if (!d.fluides.length) return h + '<div class="note center">Aucun mouvement de fluide cette année-là.</div>';
+  var cell = 'text-align:right;font-variant-numeric:tabular-nums';
+  h += '<div class="sec">Vue d’ensemble (kg)</div><div class="card" style="padding:12px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">' +
+    '<tr style="color:var(--muted)"><th style="text-align:left;padding:6px 4px">Code gaz</th><th style="' + cell + ';padding:6px 4px">Neuf 1er janv.</th><th style="' + cell + ';padding:6px 4px">Neuf 31 déc.</th><th style="' + cell + ';padding:6px 4px">Usagé 1er janv.</th><th style="' + cell + ';padding:6px 4px">Usagé 31 déc.</th></tr>' +
+    d.fluides.map(function (f) { return '<tr style="border-top:1px solid var(--line)"><td style="padding:8px 4px;font-weight:700">' + esc(f.code) + '</td><td style="' + cell + '">' + f.n1 + '</td><td style="' + cell + '">' + f.n2 + '</td><td style="' + cell + '">' + f.u1 + '</td><td style="' + cell + '">' + f.u2 + '</td></tr>'; }).join('') + '</table></div>';
+  var fl = d.fluides.filter(function (f) { return f.code === S.declFluid; })[0] || d.fluides[0];
+  var done = declDone(), total = 0, nDone = 0;
+  d.fluides.forEach(function (f) { ['neuf', 'usage'].forEach(function (s) { f[s].forEach(function (r, i) { total++; if (done[f.code + '|' + s + '|' + i]) nDone++; }); }); });
+  h += '<div class="sec">Détail par fluide</div>' + chips(d.fluides.map(function (f) { return [f.code, f.code]; }), fl.code, 'declFluid') +
+    '<div class="note">' + nDone + ' / ' + total + ' valeurs reportées. Même ordre que sur le site : touche une ligne quand tu as reporté la valeur, elle se coche.</div>';
+  [['Fluide neuf', 'neuf'], ['Fluide usagé', 'usage']].forEach(function (sec) {
+    h += '<div class="sec">' + sec[0] + ' · ' + esc(fl.code) + '</div><div class="card" style="padding:4px 16px;gap:0">' + fl[sec[1]].map(function (r, i) {
+      var key = fl.code + '|' + sec[1] + '|' + i, on = !!done[key];
+      return '<button type="button" data-act="declToggle" data-arg="' + esc(key) + '" aria-pressed="' + on + '" style="display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 0 8px ' + (r.sub ? '18px' : '0') + ';border:0;border-bottom:1px solid var(--line);background:none;text-align:left;cursor:pointer;width:100%">' +
+        '<span style="width:22px;height:22px;border-radius:6px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;' + (on ? 'background:var(--green);color:#fff' : 'border:2px solid #9AA8A0') + '">' + (on ? '✓' : '') + '</span>' +
+        '<span style="flex:1;font-size:14px;line-height:1.35;' + (r.sub ? 'color:var(--muted)' : 'font-weight:600') + (on ? ';text-decoration:line-through;color:#6B7A71' : '') + '">' + esc(r.label) + (r.ecart ? '<br><span class="note">' + esc(r.ecart) + ' kg</span>' : '') + '</span>' +
+        '<b style="font-size:15px;white-space:nowrap">' + esc(r.value) + '</b></button>';
+    }).join('') + '</div>';
+  });
+  h += (S.declPdf ? '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(S.declPdf.url) + '">Ouvrir ' + esc(S.declPdf.name) + '</a>' : '') +
+    '<button class="btn" data-act="declExport"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Export…' : 'Exporter le récapitulatif en PDF') + '</button>' +
+    '<div class="note">Quantité acquise = bouteilles neuves achetées dans l’année (onglet Bouteilles). Chargée = pesées des bouteilles neuves. Récupérée = pesées des bouteilles de récupération et de transfert ; ce qui en est rechargé compte en « recyclée ». ' +
+    'Remise aux fournisseurs = bouteilles rendues dans l’année. Les stocks viennent des pesées : un écart signale une pesée manquante ou à vérifier. Le PDF est rangé dans le Drive (ARE Fluides › Déclarations).</div>';
+  return h;
+};
+
+/* ---------- Actions */
+function loadBottles() { return call('listBouteilles').then(function (d) { S.bt = d; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); }
+function openBottleDetail(ref) {
+  S.btD = null; S.confirmBottle = false; render();
+  return call('bouteille', { ref: ref }).then(function (b) { setBottle(b); render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
+}
+function setBottle(b) { S.btD = b; S.btSt = { statut: b.statut, distributeur: b.distributeur, dateRetour: frToIso(b.dateRetour) || todayIso(), bsff: b.bsff }; }
+function navTo(screen) { if (S.screen !== screen) go(screen); else render(); }
+
+Object.assign(A, {
+  goProfile: function () {
+    if (S.screen !== 'profile') go('profile');
+    call('me').then(function (u) { S.user = u; render(); }).catch(function () {});
+    call('profileSummary').then(function (x) { S.summary = x; render(); }).catch(function () {});
+  },
+  goProfileEdit: function () { var u = S.user; S.prof = { prenom: u.prenom, nom: u.nom, attestation: u.attestation }; S.pwd = { oldPassword: '', newPassword: '', confirm: '' }; go('profileEdit'); },
+  saveProfile: function () { run(call('updateProfile', S.prof), 'Profil enregistré.').then(function (u) { S.user = u; render(); }); },
+  pickAtt: function (a) {
+    var p = String(a || '').split('|'); S.attTarget = p[1] || '';
+    var i = document.getElementById(p[0] === 'cam' ? 'attCam' : 'attFile'); if (i) { i.value = ''; i.click(); }
+  },
+  goBottles: function () { S.stack = []; S.screen = 'bottles'; S.msg = null; S.btTab = S.btTab || 'depot'; render(); window.scrollTo(0, 0); loadBottles(); },
+  btTab: function (t) { S.btTab = t; render(); },
+  openBottle: function (ref) { go('bottle'); openBottleDetail(ref); },
+  newBottle: function () { S.bf = { original: '', ref: '', kind: 'neuve', fluide: 'R32', vide: '', plein: '', pesee: '', fournisseur: '', dateEntree: todayIso() }; go('bottleForm'); },
+  editBottle: function () {
+    var b = S.btD;
+    S.bf = { original: b.ref, ref: b.ref, kind: b.kind, fluide: b.fluide, vide: b.vide, plein: b.plein, pesee: '', fournisseur: b.fournisseur, dateEntree: frToIso(b.dateEntree) };
+    go('bottleForm');
+  },
+  setBfKind: function (k) { S.bf.kind = k; render(); },
+  saveBottle: function () {
+    var f = S.bf, d = { original: f.original, ref: f.ref, kind: f.kind, fluide: f.fluide, vide: f.vide, plein: f.kind === 'neuve' ? f.plein : '', pesee: f.pesee, fournisseur: f.fournisseur, dateEntree: isoToFr(f.dateEntree) };
+    run(call('saveBouteille', d), f.original ? 'Bouteille modifiée.' : 'Bouteille ajoutée au dépôt.').then(function (b) {
+      setBottle(b); S.screen = 'bottle'; if (!f.original) { S.stack = ['bottles']; } render(); window.scrollTo(0, 0);
+      call('listBouteilles').then(function (x) { S.bt = x; }).catch(function () {});
+    });
+  },
+  btStatut: function (s) { S.btSt.statut = s; render(); },
+  btDist: function (id) { S.btSt.distributeur = id; render(); },
+  saveBtStatut: function () {
+    var f = S.btSt, b = S.btD;
+    var d = f.statut === 'rendue' ? { ref: b.ref, statut: 'rendue', distributeur: f.distributeur, dateRetour: isoToFr(f.dateRetour), bsff: f.bsff } : { ref: b.ref, statut: 'depot' };
+    run(call('setBouteilleStatut', d), d.statut === 'rendue' ? 'Bouteille rendue au distributeur.' : 'Bouteille remise au dépôt.').then(function (x) {
+      setBottle(x); render(); call('listBouteilles').then(function (y) { S.bt = y; }).catch(function () {});
+    });
+  },
+  askDelBottle: function () { S.confirmBottle = true; render(); },
+  cancelDelBottle: function () { S.confirmBottle = false; render(); },
+  delBottle: function () {
+    S.confirmBottle = false;
+    run(call('deleteBouteille', { ref: S.btD.ref }), 'Bouteille supprimée.').then(function () { S.stack = []; S.screen = 'bottles'; loadBottles(); render(); });
+  },
+  goDetecteurs: function () { S.dets = null; S.detF = { id: '', marque: '', reference: '', serie: '', dernierControle: '' }; go('detecteurs'); call('listDetecteurs').then(function (l) { S.dets = l; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
+  newDet: function () { S.detF = { id: '', marque: '', reference: '', serie: '', dernierControle: '' }; render(); },
+  editDet: function (id) {
+    var d = S.dets.filter(function (x) { return x.id === id; })[0];
+    S.detF = { id: d.id, marque: d.marque, reference: d.ref, serie: d.serie, dernierControle: frToIso(d.dernierControle) }; render();
+    var el = document.querySelector('[data-bind="detF.marque"]'); if (el) el.scrollIntoView({ block: 'center' });
+  },
+  saveDet: function () {
+    var f = S.detF;
+    run(call('saveDetecteur', { id: f.id, marque: f.marque, reference: f.reference, serie: f.serie, dernierControle: isoToFr(f.dernierControle) }), f.id ? 'Détecteur modifié.' : 'Détecteur ajouté.')
+      .then(function (l) { S.dets = l; A.newDet(); window.scrollTo(0, 0); });
+  },
+  goDistributeurs: function () { S.dists = null; S.distF = { id: '', nom: '', siret: '', adresse: '' }; go('distributeurs'); call('listDistributeurs').then(function (l) { S.dists = l; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
+  newDist: function () { S.distF = { id: '', nom: '', siret: '', adresse: '' }; render(); },
+  editDist: function (id) {
+    var d = S.dists.filter(function (x) { return x.id === id; })[0];
+    S.distF = { id: d.id, nom: d.nom, siret: d.siret, adresse: d.adresse }; render();
+    var el = document.querySelector('[data-bind="distF.nom"]'); if (el) el.scrollIntoView({ block: 'center' });
+  },
+  saveDist: function () {
+    var f = S.distF;
+    run(call('saveDistributeur', f), f.id ? 'Distributeur modifié.' : 'Distributeur ajouté.').then(function (l) { S.dists = l; A.newDist(); window.scrollTo(0, 0); });
+  },
+  goDecl: function () { S.declYear = S.declYear || new Date().getFullYear() - 1; S.decl = null; S.declPdf = null; go('declaration'); loadDecl(); },
+  declYear: function (y) { S.declYear = +y; S.decl = null; S.declPdf = null; render(); loadDecl(); },
+  declFluid: function (f) { S.declFluid = f; render(); },
+  declToggle: function (k) { var d = declDone(); d[k] = !d[k]; store('are_decl_' + S.declYear, JSON.stringify(d)); render(); },
+  declExport: function () { run(call('exportDeclaration', { annee: S.declYear }), 'Récapitulatif enregistré dans le Drive.').then(function (x) { S.declPdf = x; render(); }); }
+});
+function loadDecl() { call('declaration', { annee: S.declYear }).then(function (d) { S.decl = d; if (!d.fluides.some(function (f) { return f.code === S.declFluid; })) S.declFluid = d.fluides.length ? d.fluides[0].code : ''; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); }
+
+document.addEventListener('change', function (e) {
+  var id = e.target.id;
+  if (id !== 'attCam' && id !== 'attFile') return;
+  var file = e.target.files && e.target.files[0];
+  if (!file) return;
+  var target = S.attTarget || '';
+  S.attBusy = target || 'me'; S.msg = null; render();
+  fileToPayload(file, 2200).then(function (p) {
+    return call('uploadAttestation', { data: p.data, mime: p.mime, opId: target });
+  }).then(function (r) {
+    S.attBusy = null;
+    if (!target || target === S.user.id) { S.user.attestationChargee = true; S.user.attestationDate = r.date; }
+    if (S.opForm && target === S.opForm.id) { S.opForm.attestationChargee = true; S.opForm.attestationDate = r.date; }
+    S.msg = { text: 'Attestation enregistrée dans le Drive.' }; render();
+  }).catch(function (err) { S.attBusy = null; S.msg = { err: true, text: err.message }; render(); });
+});
+document.addEventListener('input', function (e) {
+  var p = e.target.getAttribute && e.target.getAttribute('data-bind');
+  if (p === 'bf.vide' || p === 'bf.plein') { setPath(p, e.target.value); var el = document.getElementById('bfInit'); if (el) el.textContent = bfInitial(); }
 });
 
 /* ============================== Événements ============================== */

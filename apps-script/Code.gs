@@ -6,7 +6,7 @@
  * Les mots de passe sont stockés hachés (SHA-256 + sel) dans l'onglet caché « _Comptes ».
  */
 
-var APP = { name: 'ARE Fluides', version: 'L2', sessionSeconds: 6 * 60 * 60, hashRounds: 300 };
+var APP = { name: 'ARE Fluides', version: 'L3', sessionSeconds: 6 * 60 * 60, hashRounds: 300 };
 var SH = {
   params: 'Paramètres', ops: 'Opérateurs', chantiers: 'Chantiers', mouv: 'Mouvements', bout: 'Bouteilles',
   outils: 'Outillage', dist: 'Distributeurs', fluides: 'Fluides', machines: 'Machines', comptes: '_Comptes'
@@ -57,7 +57,22 @@ function api(req) {
       saveOperateur: function (d) { admin_(user); return saveOperateur_(d, user); },
       setOperateurActif: function (d) { admin_(user); return setOperateurActif_(d, user); },
       deleteOperateur: function (d) { admin_(user); return deleteOperateur_(d, user); },
-      disconnectOperateur: function (d) { admin_(user); return disconnectOperateur_(d, user); }
+      disconnectOperateur: function (d) { admin_(user); return disconnectOperateur_(d, user); },
+      // Livraison 3
+      profileSummary: function () { return profileSummary_(user); },
+      updateProfile: function (d) { return updateProfile_(user, d); },
+      uploadAttestation: function (d) { return uploadAttestation_(user, d); },
+      listBouteilles: function () { return listBouteilles_(); },
+      bouteille: function (d) { return bouteilleDetail_(d); },
+      saveBouteille: function (d) { admin_(user); return saveBouteille_(d, user); },
+      setBouteilleStatut: function (d) { admin_(user); return setBouteilleStatut_(d, user); },
+      deleteBouteille: function (d) { admin_(user); return deleteBouteille_(d, user); },
+      listDetecteurs: function () { return listDetecteurs_(); },
+      saveDetecteur: function (d) { admin_(user); return saveDetecteur_(d, user); },
+      listDistributeurs: function () { return distributeurs_(); },
+      saveDistributeur: function (d) { admin_(user); return saveDistributeur_(d, user); },
+      declaration: function (d) { admin_(user); return declaration_(d); },
+      exportDeclaration: function (d) { admin_(user); return exportDeclaration_(d); }
     };
     if (!priv[action]) throw new Error('Action inconnue : ' + action);
     return ok_(priv[action](data));
@@ -190,7 +205,8 @@ function operatorPublic_(o) {
     id: o['ID'], prenom: o['Prénom'] || '', nom: o['Nom'] || '', email: o['E-mail (identifiant)'] || '', email2: o['E-mail secondaire'] || '',
     role: String(o['Rôle'] || '').toLowerCase() === 'admin' ? 'admin' : 'operateur',
     attestation: o['N° attestation d’aptitude'] ? String(o['N° attestation d’aptitude']) : '',
-    attestationChargee: String(o['Attestation chargée'] || '').toLowerCase().indexOf('oui') === 0,
+    attestationChargee: !!String(o['Attestation (fichier)'] || '').trim() || (/^oui/i.test(String(o['Attestation chargée'] || '')) && !/recharger/i.test(String(o['Attestation chargée'] || ''))),
+    attestationDate: (String(o['Attestation chargée'] || '').match(/(\d{2}\/\d{2}\/\d{4})/) || [])[1] || '',
     actif: String(o['Actif'] === undefined ? 'oui' : (o['Actif'] || 'oui')).toLowerCase() !== 'non'
   };
 }
@@ -817,7 +833,7 @@ function bouteilles_() {
 function distributeurs_() {
   var t; try { t = readTable_(SH.dist); } catch (e) { return []; }
   return t.rows.filter(function (r) { return String(r['Nom'] || '').trim(); }).map(function (r) {
-    return { id: String(r['ID']), nom: String(r['Nom']), siret: String(r['SIRET'] || ''), adresse: String(r['Adresse du site de reprise'] || '') };
+    return { id: String(r['ID']), nom: String(r['Nom']), siret: String(r['SIRET'] || '').replace(/^'/, ''), adresse: String(r['Adresse du site de reprise'] || '') };
   });
 }
 
@@ -1120,7 +1136,12 @@ function saveManip_(d, user) {
     // Stock : nouvelle pesée de la bouteille
     if (m.bouteille && isFinite(apres)) {
       var bt = readTable_(SH.bout), br = bt.rows.filter(function (r) { return String(r['Réf bouteille']).trim() === m.bouteille; })[0];
-      if (br) writeRow_(bt, { 'Dernière pesée (kg)': apres }, br._row);
+      if (br) {
+        var bup = { 'Dernière pesée (kg)': apres }, bv = num_(br['Poids à vide (kg)']);
+        if (isFinite(bv)) bup['Fluide restant (kg)'] = Math.round(Math.max(0, apres - bv) * 1000) / 1000;
+        if (!String(br['Fluide'] || '').trim() && c.fluide) bup['Fluide'] = c.fluide;   // bouteille de récupération vide : prend le fluide récupéré
+        writeRow_(bt, bup, br._row);
+      }
     }
     out.cerfa = cerfa;
     out.fields = cerfaFields_(m);
@@ -1284,7 +1305,11 @@ function deleteManipRow_(mv, r, user) {
   // Stock : on remet la pesée d'avant si la bouteille n'a pas servi depuis
   if (m.bouteille) {
     var bt = readTable_(SH.bout), br = bt.rows.filter(function (x) { return String(x['Réf bouteille']).trim() === m.bouteille; })[0];
-    if (br && num_(br['Dernière pesée (kg)']) === num_(r['Poids après (kg)']) && isFinite(num_(r['Poids avant (kg)']))) writeRow_(bt, { 'Dernière pesée (kg)': num_(r['Poids avant (kg)']) }, br._row);
+    if (br && num_(br['Dernière pesée (kg)']) === num_(r['Poids après (kg)']) && isFinite(num_(r['Poids avant (kg)']))) {
+      var pv = num_(r['Poids avant (kg)']), tare = num_(br['Poids à vide (kg)']), back = { 'Dernière pesée (kg)': pv };
+      if (isFinite(tare)) back['Fluide restant (kg)'] = Math.round(Math.max(0, pv - tare) * 1000) / 1000;
+      writeRow_(bt, back, br._row);
+    }
   }
   trashFile_(String(r['CERFA (ID)'] || ''));
   archiveRow_(MES.trashMouv, mv, r, user);
@@ -1338,4 +1363,350 @@ function readPlate_(d) {
   ['serie', 'modele', 'marque', 'fluide', 'charge'].forEach(function (k) { out[k] = raw[k] === null || raw[k] === undefined ? '' : String(raw[k]).trim().slice(0, 80); });
   if (!out.serie) throw new Error('N° de série illisible : reprends la photo plus près, ou saisis-le à la main.');
   return out;
+}
+
+/* ================================================================== Livraison 3 : bouteilles, détecteurs, distributeurs, déclaration, profil */
+
+var L3 = { trashBout: '_Bouteilles supprimées', declFolder: ['ARE Fluides', 'Déclarations'], opsFolder: ['ARE Fluides', 'Opérateurs'] };
+var BOUT_TYPES = { neuve: 'Neuve', recup: 'Récupération', transfert: 'Transfert' };
+var BOUT_COLS = ['Réf bouteille', 'Type', 'Fluide', 'Poids à vide (kg)', 'Poids plein à l’achat (kg)', 'Fluide initial (kg)', 'Dernière pesée (kg)', 'Fluide restant (kg)',
+  'Statut', 'Distributeur (ID)', 'Date de retour', 'N° BSFF', 'Date d’entrée', 'Fournisseur achat'];
+
+function boutKind_(type) { var t = String(type || '').toLowerCase(); return /neuv|neuf/.test(t) ? 'neuve' : /transf/.test(t) ? 'transfert' : 'recup'; }
+function boutTable_() { ensureSheet_(SH.bout, BOUT_COLS); return readTable_(SH.bout); }
+function round3_(n) { return Math.round(n * 1000) / 1000; }
+
+function bouteilleFromRow_(r, dists) {
+  var vide = num_(r['Poids à vide (kg)']), plein = num_(r['Poids plein à l’achat (kg)']), pesee = num_(r['Dernière pesée (kg)']);
+  var kind = boutKind_(r['Type']), rendue = /rendu/i.test(String(r['Statut'] || ''));
+  var dist = (dists || []).filter(function (x) { return x.id === String(r['Distributeur (ID)'] || ''); })[0];
+  return {
+    ref: String(r['Réf bouteille']).trim(), kind: kind, type: BOUT_TYPES[kind], fluide: normFluide_(r['Fluide']),
+    vide: fr_(vide, 2), plein: kind === 'neuve' ? fr_(plein, 2) : '', initial: kind === 'neuve' && isFinite(plein) && isFinite(vide) ? fr_(plein - vide, 2) : '',
+    pesee: fr_(pesee, 2), reste: isFinite(vide) && isFinite(pesee) ? fr_(Math.max(0, pesee - vide), 2) : '',
+    resteN: isFinite(vide) && isFinite(pesee) ? Math.max(0, pesee - vide) : 0,
+    statut: rendue ? 'rendue' : 'depot', statutLabel: rendue ? 'Rendue' : 'Au dépôt',
+    distributeur: String(r['Distributeur (ID)'] || ''), distributeurNom: dist ? dist.nom : '', dateRetour: String(r['Date de retour'] || ''),
+    bsff: String(r['N° BSFF'] || ''), dateEntree: String(r['Date d’entrée'] || ''), fournisseur: String(r['Fournisseur achat'] || '')
+  };
+}
+
+function listBouteilles_() {
+  var dists = distributeurs_();
+  var list = boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); }).map(function (r) { return bouteilleFromRow_(r, dists); });
+  var sum = function (f) { return fr_(list.filter(f).reduce(function (a, b) { return a + b.resteN; }, 0), 2); };
+  var fournisseurs = {};
+  list.forEach(function (b) { if (b.fournisseur) fournisseurs[b.fournisseur] = 1; });
+  return {
+    bouteilles: list, distributeurs: dists, fournisseurs: Object.keys(fournisseurs).sort(),
+    totals: { neuf: sum(function (b) { return b.statut === 'depot' && b.kind === 'neuve'; }), recup: sum(function (b) { return b.statut === 'depot' && b.kind !== 'neuve'; }) },
+    fluides: listFluides_().map(function (f) { return f.code; })
+  };
+}
+
+function findBout_(ref) {
+  var t = boutTable_(), key = String(ref || '').trim().toLowerCase();
+  var row = t.rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim().toLowerCase() === key; })[0];
+  return { t: t, row: row };
+}
+
+function bouteilleDetail_(d) {
+  var f = findBout_(d.ref);
+  if (!f.row) throw new Error('Bouteille introuvable.');
+  var b = bouteilleFromRow_(f.row, distributeurs_());
+  var hist = [];
+  readTable_(SH.mouv).rows.forEach(function (r) {
+    if (String(r['Bouteille'] || '').trim().toLowerCase() !== b.ref.toLowerCase()) return;
+    var v = num_(r['Variation bouteille (kg)']);
+    if (!isFinite(v)) v = num_(r['Poids après (kg)']) - num_(r['Poids avant (kg)']);
+    hist.push({ date: String(r['Date'] || ''), op: String(r['Opération'] || ''), client: String(r['Chantier / Client'] || ''), cerfa: String(r['N° CERFA'] || ''), qty: isFinite(v) ? (v > 0 ? '+' : '−') + fr_(Math.abs(v), 2) : '' });
+  });
+  if (b.kind === 'neuve' && b.initial) hist.push({ date: b.dateEntree, op: 'Achat' + (b.fournisseur ? ' · ' + b.fournisseur : ''), client: '', cerfa: '', qty: '+' + b.initial });
+  if (b.statut === 'rendue') hist.push({ date: b.dateRetour, op: 'Rendue' + (b.distributeurNom ? ' à ' + b.distributeurNom : ''), client: '', cerfa: '', qty: b.reste ? '−' + b.reste : '' });
+  var key = function (h) { var x = parseFr_(h.date); return x ? x.getTime() : 0; };
+  hist.sort(function (a, c) { return key(c) - key(a); });
+  b.hist = hist;
+  b.utilisee = hist.some(function (h) { return h.cerfa; });
+  return b;
+}
+
+/** Ajout (achat ou bouteille déjà en stock) ou modification des caractéristiques d'une bouteille. Admin. */
+function saveBouteille_(d, user) {
+  var ref = String(d.ref || '').trim();
+  if (!ref) throw new Error('Indique la référence de la bouteille.');
+  var kind = BOUT_TYPES[d.kind] ? d.kind : '';
+  if (!kind) throw new Error('Choisis le type de bouteille.');
+  var fluide = normFluide_(d.fluide);
+  var vide = num_(d.vide), plein = num_(d.plein), pesee = num_(d.pesee);
+  if (!isFinite(vide) || vide <= 0) throw new Error('Indique le poids à vide (tare) de la bouteille.');
+  if (kind === 'neuve') {
+    if (!fluide) throw new Error('Choisis le fluide de la bouteille neuve.');
+    if (!isFinite(plein) || plein <= vide) throw new Error('Le poids plein doit être supérieur au poids à vide.');
+  }
+  if (isFinite(pesee) && pesee < vide - 0.05) throw new Error('La pesée actuelle ne peut pas être inférieure au poids à vide.');
+  var dateEntree = String(d.dateEntree || '').trim();
+  if (dateEntree && !parseFr_(dateEntree)) throw new Error('Date au format jj/mm/aaaa.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var f = findBout_(d.original || ref);
+    if (d.original && !f.row) throw new Error('Bouteille introuvable.');
+    if (!d.original && f.row) throw new Error('Une bouteille porte déjà cette référence.');
+    if (d.original && ref.toLowerCase() !== String(d.original).trim().toLowerCase()) {
+      if (findBout_(ref).row) throw new Error('Une bouteille porte déjà cette référence.');
+      var used = readTable_(SH.mouv).rows.some(function (r) { return String(r['Bouteille'] || '').trim().toLowerCase() === String(d.original).trim().toLowerCase(); });
+      if (used) throw new Error('Cette bouteille figure déjà dans le registre : sa référence ne peut plus changer.');
+    }
+    var rec = {
+      'Réf bouteille': ref, 'Type': BOUT_TYPES[kind], 'Fluide': fluide, 'Poids à vide (kg)': vide,
+      'Poids plein à l’achat (kg)': kind === 'neuve' ? plein : '', 'Fluide initial (kg)': kind === 'neuve' ? round3_(plein - vide) : '',
+      'Date d’entrée': dateEntree, 'Fournisseur achat': String(d.fournisseur || '').trim()
+    };
+    if (!f.row) {
+      var p0 = isFinite(pesee) ? pesee : (kind === 'neuve' ? plein : vide);
+      rec['Dernière pesée (kg)'] = p0; rec['Fluide restant (kg)'] = round3_(Math.max(0, p0 - vide)); rec['Statut'] = 'Au dépôt';
+    } else if (isFinite(pesee)) {
+      rec['Dernière pesée (kg)'] = pesee; rec['Fluide restant (kg)'] = round3_(Math.max(0, pesee - vide));
+    } else {
+      var pOld = num_(f.row['Dernière pesée (kg)']);
+      if (isFinite(pOld)) rec['Fluide restant (kg)'] = round3_(Math.max(0, pOld - vide));
+    }
+    writeRow_(f.t, rec, f.row ? f.row._row : null);
+  } finally { lock.releaseLock(); }
+  return bouteilleDetail_({ ref: ref });
+}
+
+/** Au dépôt ou rendue au distributeur (avec la date et le BSFF). Admin. */
+function setBouteilleStatut_(d, user) {
+  var f = findBout_(d.ref);
+  if (!f.row) throw new Error('Bouteille introuvable.');
+  if (d.statut === 'rendue') {
+    if (!d.distributeur || !distributeurs_().some(function (x) { return x.id === d.distributeur; })) throw new Error('Choisis le distributeur à qui la bouteille est rendue.');
+    if (!parseFr_(d.dateRetour)) throw new Error('Indique la date de retour (jj/mm/aaaa).');
+    if (parseFr_(d.dateRetour) > new Date()) throw new Error('La date de retour ne peut pas être dans le futur.');
+    writeRow_(f.t, { 'Statut': 'Rendue', 'Distributeur (ID)': d.distributeur, 'Date de retour': d.dateRetour, 'N° BSFF': String(d.bsff || '').trim() }, f.row._row);
+  } else {
+    writeRow_(f.t, { 'Statut': 'Au dépôt', 'Date de retour': '', 'N° BSFF': '' }, f.row._row);
+  }
+  return bouteilleDetail_({ ref: d.ref });
+}
+
+/** Suppression d'une bouteille jamais utilisée (erreur de saisie). Copie gardée dans un onglet masqué. Admin. */
+function deleteBouteille_(d, user) {
+  var f = findBout_(d.ref);
+  if (!f.row) throw new Error('Bouteille introuvable.');
+  var used = readTable_(SH.mouv).rows.some(function (r) { return String(r['Bouteille'] || '').trim().toLowerCase() === String(d.ref).trim().toLowerCase(); });
+  if (used) throw new Error('Cette bouteille figure dans le registre des mouvements : elle ne peut pas être supprimée.');
+  archiveRow_(L3.trashBout, f.t, f.row, user);
+  f.t.sh.deleteRow(f.row._row);
+  return true;
+}
+
+/* ---------- Détecteurs de fuite (onglet Outillage) */
+
+function listDetecteurs_() {
+  return outils_().filter(function (o) { return /d[ée]tect/i.test(o.type); });
+}
+
+function saveDetecteur_(d, user) {
+  var marque = String(d.marque || '').trim(), ref = String(d.reference || '').trim();
+  if (!marque && !ref) throw new Error('Indique la marque et le modèle du détecteur.');
+  var last = parseFr_(d.dernierControle);
+  if (!last) throw new Error('Indique la date du dernier contrôle (jj/mm/aaaa).');
+  if (last > new Date()) throw new Error('La date du dernier contrôle ne peut pas être dans le futur.');
+  var freq = num_(d.frequence); if (!isFinite(freq) || freq <= 0) freq = 12;
+  var next = new Date(last.getTime()); next.setMonth(next.getMonth() + freq);
+  ensureSheet_(SH.outils, ['ID', 'Type', 'Marque', 'Référence', 'N° de série', 'Dernier contrôle', 'Fréquence (mois)', 'Prochain contrôle', 'Statut']);
+  var t = readTable_(SH.outils);
+  var row = d.id ? t.rows.filter(function (r) { return String(r['ID']) === d.id; })[0] : null;
+  if (d.id && !row) throw new Error('Détecteur introuvable.');
+  var rec = {
+    'Type': 'Détecteur de fuite', 'Marque': marque, 'Référence': ref, 'N° de série': String(d.serie || '').trim(),
+    'Dernier contrôle': d.dernierControle, 'Fréquence (mois)': freq, 'Prochain contrôle': next, 'Statut': next >= new Date() ? 'À jour' : 'À contrôler'
+  };
+  if (!row) rec['ID'] = nextId_(t.rows, 'T', 'ID');
+  writeRow_(t, rec, row ? row._row : null);
+  return listDetecteurs_();
+}
+
+/* ---------- Distributeurs */
+
+function saveDistributeur_(d, user) {
+  var nom = String(d.nom || '').trim();
+  if (!nom) throw new Error('Indique le nom du distributeur.');
+  var siret = String(d.siret || '').replace(/\s/g, '');
+  if (siret && !/^\d{14}$/.test(siret)) throw new Error('Le SIRET fait 14 chiffres.');
+  ensureSheet_(SH.dist, ['ID', 'Nom', 'SIRET', 'Adresse du site de reprise']);
+  var t = readTable_(SH.dist);
+  var row = d.id ? t.rows.filter(function (r) { return String(r['ID']) === d.id; })[0] : null;
+  if (d.id && !row) throw new Error('Distributeur introuvable.');
+  var rec = { 'Nom': nom, 'SIRET': siret ? "'" + siret : '', 'Adresse du site de reprise': String(d.adresse || '').trim() };
+  if (!row) rec['ID'] = nextId_(t.rows, 'D', 'ID');
+  writeRow_(t, rec, row ? row._row : null);
+  return distributeurs_();
+}
+
+/* ---------- Profil et attestation */
+
+function updateProfile_(user, d) {
+  var t = readTable_(SH.ops), row = t.rows.filter(function (r) { return r['ID'] === user.id; })[0];
+  if (!row) throw new Error('Compte introuvable.');
+  var prenom = String(d.prenom || '').trim(), nom = String(d.nom || '').trim();
+  if (!prenom && !nom) throw new Error('Indique ton prénom et ton nom.');
+  writeRow_(t, { 'Prénom': prenom, 'Nom': nom, 'N° attestation d’aptitude': String(d.attestation || '').trim() }, row._row);
+  return operatorPublic_(readTable_(SH.ops).rows.filter(function (r) { return r['ID'] === user.id; })[0]);
+}
+
+/** Fichier de l'attestation : rangé dans le Drive (dossier Opérateurs), jamais renvoyé ni affiché par l'appli. */
+function uploadAttestation_(user, d) {
+  var id = d.opId && d.opId !== user.id ? (admin_(user), d.opId) : user.id;
+  var mime = d.mime === 'application/pdf' ? 'application/pdf' : 'image/jpeg';
+  if (!d.data || String(d.data).length > 14 * 1024 * 1024) throw new Error('Fichier manquant ou trop lourd (10 Mo maximum).');
+  ensureColumn_(SH.ops, 'Attestation (fichier)');
+  ensureColumn_(SH.ops, 'Attestation chargée');
+  var t = readTable_(SH.ops), row = t.rows.filter(function (r) { return r['ID'] === id; })[0];
+  if (!row) throw new Error('Compte introuvable.');
+  var name = 'Attestation ' + ((row['Prénom'] || '') + ' ' + (row['Nom'] || '')).trim() + ' ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyMMdd') + (mime === 'application/pdf' ? '.pdf' : '.jpg');
+  var file = saveFile_(folderPath_(L3.opsFolder), d.data, mime, name);
+  trashFile_(String(row['Attestation (fichier)'] || ''));
+  var date = today_();
+  writeRow_(t, { 'Attestation (fichier)': file.id, 'Attestation chargée': 'oui (' + date + ')' }, row._row);
+  return { date: date };
+}
+
+function profileSummary_(user) {
+  var out = { annee: new Date().getFullYear() - 1 };
+  if (user.role !== 'admin') return out;
+  var det = listDetecteurs_();
+  out.comptes = readTable_(SH.ops).rows.length;
+  out.detecteurs = det.length; out.detecteursAFaire = det.filter(function (x) { return !x.ok; }).length;
+  out.distributeurs = distributeurs_().length;
+  return out;
+}
+
+/* ---------- Déclaration annuelle (mêmes rubriques et même ordre que le site SOCOTEC) */
+
+function declaration_(d) {
+  var year = parseInt(d.annee, 10) || (new Date().getFullYear() - 1);
+  var start = new Date(year, 0, 1), end = new Date(year, 11, 31, 23, 59, 59), prevEnd = new Date(year - 1, 11, 31, 23, 59, 59);
+  var dists = distributeurs_();
+  var bt = boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); });
+  var B = {};
+  bt.forEach(function (r) {
+    var ref = String(r['Réf bouteille']).trim().toLowerCase();
+    B[ref] = { ref: String(r['Réf bouteille']).trim(), kind: boutKind_(r['Type']), fluide: normFluide_(r['Fluide']), vide: num_(r['Poids à vide (kg)']), plein: num_(r['Poids plein à l’achat (kg)']),
+      entree: parseFr_(r['Date d’entrée']), rendue: /rendu/i.test(String(r['Statut'] || '')), retour: parseFr_(r['Date de retour']), dist: String(r['Distributeur (ID)'] || ''), mv: [] };
+  });
+  var flows = [];
+  readTable_(SH.mouv).rows.forEach(function (r) {
+    var b = B[String(r['Bouteille'] || '').trim().toLowerCase()];
+    var date = parseFr_(r['Date']);
+    if (!b || !date) return;
+    var avant = num_(r['Poids avant (kg)']), apres = num_(r['Poids après (kg)']), v = num_(r['Variation bouteille (kg)']);
+    if (!isFinite(v) && isFinite(avant) && isFinite(apres)) v = apres - avant;
+    if (!isFinite(v) || v === 0) return;
+    var nat = ''; try { nat = (JSON.parse(r['Données'] || '{}').nature || []).join(','); } catch (e) { nat = ''; }
+    var m = { date: date, v: v, apres: apres, fluide: normFluide_(r['Fluide']) || b.fluide, cadre: String(r['Cadre'] || ''), nature: nat };
+    b.mv.push(m);
+    if (!b.fluide) b.fluide = m.fluide;
+    flows.push({ b: b, m: m });
+  });
+  Object.keys(B).forEach(function (k) { B[k].mv.sort(function (a, c) { return a.date - c.date; }); });
+  // Contenu d'une bouteille à une date : dernière pesée connue moins la tare
+  var content = function (b, at) {
+    if (b.entree && b.entree > at) return null;
+    if (b.rendue && b.retour && b.retour <= at) return null;
+    // Poids de départ : pesée avant de la 1re opération, sinon plein (neuve) ou tare (récupération) ; puis chaque opération jusqu'à la date
+    var first = b.mv[0], w = first && isFinite(first.apres) ? first.apres - first.v : (b.kind === 'neuve' ? b.plein : b.vide);
+    b.mv.forEach(function (m) { if (m.date <= at) w = isFinite(m.apres) ? m.apres : w + m.v; });
+    return isFinite(w) && isFinite(b.vide) ? Math.max(0, w - b.vide) : 0;
+  };
+  var stock = function (fl, neuf, at) {
+    return Object.keys(B).reduce(function (a, k) {
+      var b = B[k]; if (b.fluide !== fl || (b.kind === 'neuve') !== neuf) return a;
+      var c = content(b, at); return a + (c || 0);
+    }, 0);
+  };
+  var inY = function (dt) { return dt && dt >= start && dt <= end; };
+  var fluids = {};
+  Object.keys(B).forEach(function (k) { var b = B[k]; if (b.fluide) fluids[b.fluide] = 1; });
+  var out = [];
+  Object.keys(fluids).sort().forEach(function (fl) {
+    var neufB = Object.keys(B).map(function (k) { return B[k]; }).filter(function (b) { return b.fluide === fl && b.kind === 'neuve'; });
+    var usB = Object.keys(B).map(function (k) { return B[k]; }).filter(function (b) { return b.fluide === fl && b.kind !== 'neuve'; });
+    var n1 = stock(fl, true, prevEnd), n2 = stock(fl, true, end), u1 = stock(fl, false, prevEnd), u2 = stock(fl, false, end);
+    var acquis = neufB.filter(function (b) { return inY(b.entree); }).reduce(function (a, b) { return a + (isFinite(b.plein - b.vide) ? b.plein - b.vide : 0); }, 0);
+    var fy = flows.filter(function (x) { return x.m.fluide === fl && inY(x.m.date); });
+    var charge = 0, chargeMes = 0, recup = 0, recupHU = 0, recycle = 0;
+    fy.forEach(function (x) {
+      if (x.b.kind === 'neuve' && x.m.v < 0) { charge += -x.m.v; if (/mise en service/i.test(x.m.cadre)) chargeMes += -x.m.v; }
+      if (x.b.kind !== 'neuve' && x.m.v > 0) { recup += x.m.v; if (/d[ée]mant/i.test(x.m.cadre) || /demantel/.test(x.m.nature)) recupHU += x.m.v; }
+      if (x.b.kind !== 'neuve' && x.m.v < 0) recycle += -x.m.v;
+    });
+    var remis = {};
+    usB.filter(function (b) { return b.rendue && inY(b.retour); }).forEach(function (b) {
+      var at = new Date(b.retour.getTime() - 1000);
+      var c = content(b, at) || 0;
+      remis[b.dist] = (remis[b.dist] || 0) + c;
+    });
+    var remisTotal = Object.keys(remis).reduce(function (a, k) { return a + remis[k]; }, 0);
+    if (!n1 && !n2 && !u1 && !u2 && !acquis && !charge && !recup && !remisTotal && !recycle) return;
+    var k1 = function (x) { return fr_(x, 2); };
+    var pct = function (e, base) { return base > 0 ? fr_(e / base * 100, 1) + ' %' : '0,0 %'; };
+    var ecN = n1 + acquis - charge - n2, ecU = u1 + recup - recycle - remisTotal - u2;
+    var remisRows = Object.keys(remis).length ? Object.keys(remis).map(function (id) {
+      var x = dists.filter(function (z) { return z.id === id; })[0];
+      return { label: 'Quantité remise aux fournisseurs' + (x ? ' : ' + x.nom + (x.siret ? ', SIRET ' + x.siret : '') : ' : distributeur non renseigné'), value: k1(remis[id]) };
+    }) : [{ label: 'Quantité remise aux fournisseurs', value: k1(0) }];
+    out.push({
+      code: fl, n1: k1(n1), n2: k1(n2), u1: k1(u1), u2: k1(u2),
+      neuf: [
+        { label: 'Stock de fluides neufs détenu au 1er janvier', value: k1(n1) },
+        { label: 'Quantité acquise sur le territoire national', value: k1(acquis) },
+        { label: 'Quantité acquise depuis un pays de l’UE', value: k1(0) },
+        { label: 'Quantité acquise depuis un pays hors de l’UE', value: k1(0) },
+        { label: 'Quantité chargée', value: k1(charge) },
+        { label: 'dont chargé en mise en service d’équipements', value: k1(chargeMes), sub: true },
+        { label: 'dont chargé en maintenance d’équipements', value: k1(charge - chargeMes), sub: true },
+        { label: 'Quantité cédée à d’autres opérateurs', value: k1(0) },
+        { label: 'Stock de fluides neufs détenu au 31 décembre (pesée)', value: k1(n2) },
+        { label: 'Écart', value: pct(ecN, n1 + acquis), ecart: k1(ecN) }
+      ],
+      usage: [
+        { label: 'Stock de fluides usagés détenu au 1er janvier', value: k1(u1) },
+        { label: 'Quantité récupérée', value: k1(recup) },
+        { label: 'dont sur des équipements hors d’usage', value: k1(recupHU), sub: true },
+        { label: 'dont récupéré en maintenance d’équipements', value: k1(recup - recupHU), sub: true },
+        { label: 'Quantité recyclée', value: k1(recycle) }
+      ].concat(remisRows).concat([
+        { label: 'Quantité regénérée', value: k1(0) },
+        { label: 'Quantité détruite', value: k1(0) },
+        { label: 'Stock de fluides usagés détenu au 31 décembre', value: k1(u2) },
+        { label: 'Écart', value: pct(ecU, u1 + recup), ecart: k1(ecU) }
+      ])
+    });
+  });
+  var years = {};
+  flows.forEach(function (x) { years[x.m.date.getFullYear()] = 1; });
+  Object.keys(B).forEach(function (k) { if (B[k].entree) years[B[k].entree.getFullYear()] = 1; });
+  years[new Date().getFullYear()] = 1; years[year] = 1;
+  return { annee: year, fluides: out, annees: Object.keys(years).map(Number).sort() };
+}
+
+function exportDeclaration_(d) {
+  var x = declaration_(d), p = params_();
+  var e = function (s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var rows = function (list) { return list.map(function (r) { return '<tr' + (r.sub ? ' class="sub"' : '') + '><td>' + e(r.label) + '</td><td class="v">' + e(r.value) + '</td></tr>'; }).join(''); };
+  var html = '<html><head><meta charset="utf-8"><style>body{font-family:Arial,sans-serif;font-size:11px;color:#14201A}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 6px;border-bottom:2px solid #1F6B45;padding-bottom:3px}' +
+    'table{border-collapse:collapse;width:100%;margin-bottom:8px}td,th{border:1px solid #D5DCD7;padding:4px 6px;text-align:left}th{background:#E2F0E7}.v{text-align:right;width:90px}.sub td:first-child{padding-left:18px;color:#4A5A51}.note{color:#4A5A51}</style></head><body>' +
+    '<h1>Déclaration annuelle des fluides frigorigènes ' + x.annee + '</h1><div class="note">' + e(p['Raison sociale'] || '') + (p['SIRET'] ? ' · SIRET ' + e(p['SIRET']) : '') +
+    ' · du 01/01/' + x.annee + ' au 31/12/' + x.annee + ' · calculé depuis le registre des mouvements et le stock de bouteilles, en kg</div>' +
+    '<h2>Vue d’ensemble (kg)</h2><table><tr><th>Code gaz</th><th class="v">Neuf 1er janv.</th><th class="v">Neuf 31 déc.</th><th class="v">Usagé 1er janv.</th><th class="v">Usagé 31 déc.</th></tr>' +
+    x.fluides.map(function (f) { return '<tr><td>' + e(f.code) + '</td><td class="v">' + f.n1 + '</td><td class="v">' + f.n2 + '</td><td class="v">' + f.u1 + '</td><td class="v">' + f.u2 + '</td></tr>'; }).join('') + '</table>' +
+    x.fluides.map(function (f) { return '<h2>' + e(f.code) + '</h2><table><tr><th colspan="2">Fluide neuf</th></tr>' + rows(f.neuf) + '</table><table><tr><th colspan="2">Fluide usagé</th></tr>' + rows(f.usage) + '</table>'; }).join('') +
+    '<p class="note">Généré par ARE Fluides le ' + today_() + '.</p></body></html>';
+  var name = 'Déclaration fluides ' + x.annee + '.pdf';
+  var folder = folderPath_(L3.declFolder);
+  var it = folder.getFilesByName(name); while (it.hasNext()) it.next().setTrashed(true);
+  var file = folder.createFile(HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(name));
+  return { url: file.getUrl(), name: name };
 }
