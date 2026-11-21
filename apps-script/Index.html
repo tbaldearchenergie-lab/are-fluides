@@ -72,11 +72,12 @@
 /* ============================== État ============================== */
 var S = {
   token: null, user: null, screen: 'loading', stack: [], status: null, msg: null, loaded: false,
-  chantiers: [], search: '', cur: null, form: null, fluides: [],
+  chantiers: [], search: '', page: 0, cur: null, form: null, fluides: [],
   ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '' }, busy: false
 };
 var TYPES = ['PAC AE', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
 var MAIN_FLUIDS = ['R32', 'R410A', 'R454C'];
+var PAGE = 10; // chantiers par page sur l'accueil
 
 function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
 function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -178,6 +179,8 @@ var A = {
     S.msg = arg === 'switch' ? { text: 'Changement d’opérateur : le nouvel opérateur se connecte avec son e-mail et son mot de passe.' } : null;
     render();
   },
+  pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
+  pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
   newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
   openChantier: function (id) { S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); },
   editChantier: function () { S.form = formFromChantier(S.cur); go('chantierForm'); },
@@ -281,22 +284,30 @@ var V = {
     var list = S.chantiers.filter(function (c) {
       return !q || [c.client, c.adresse, c.ville, c.cp, c.projet, c.marque, c.modele].join(' ').toLowerCase().indexOf(q) >= 0;
     });
+    var pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (S.page >= pages) S.page = pages - 1;
+    var page = S.page, start = page * PAGE;
     var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox();
-    if (isAdmin()) h += '<button class="admincard" data-act="goAdmin">' + ICON.users + '<span style="flex:1"><b>Gestion des comptes</b><small>Créer et modifier les comptes opérateurs</small></span><span aria-hidden="true">›</span></button>';
     h += '<button class="btn" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Chantiers (' + S.chantiers.length + ')</div>';
     h += '<div class="search">' + ICON.search + '<input type="search" aria-label="Rechercher un chantier" placeholder="Client, ville, n° projet, machine…" data-bind="search" data-live="1" value="' + esc(S.search) + '"></div>';
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
     else if (!S.chantiers.length) h += '<div class="note center">Aucun chantier pour l’instant. Crée le premier avec « Nouveau chantier ».</div>';
     else if (!list.length) h += '<div class="note center">Aucun chantier ne correspond à « ' + esc(S.search) + ' ».</div>';
-    h += '<div id="list" style="display:flex;flex-direction:column;gap:10px">' + list.slice(0, 80).map(function (c) {
+    h += '<div id="list" style="display:flex;flex-direction:column;gap:10px">' + list.slice(start, start + PAGE).map(function (c) {
       return '<button class="item" data-act="openChantier" data-arg="' + esc(c.id) + '"><span class="top"><span class="badge">' + esc(c.type || '—') + '</span>' +
         '<span class="badge ' + (c.misEnService ? 'grey' : 'warn') + '">' + (c.misEnService ? 'MES ' + esc(c.dateMes) : 'À mettre en service') + '</span></span>' +
         '<span style="font-size:18px;font-weight:700">' + esc(c.client || 'Sans nom') + '</span>' +
         '<span class="note">' + esc([c.ville, c.projet].filter(Boolean).join(' · ')) + '</span>' +
         '<span style="font-size:14px">' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'Unité extérieure à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</span></button>';
     }).join('') + '</div>';
-    if (list.length > 80) h += '<div class="note center">Affine la recherche pour voir les autres chantiers.</div>';
+    if (pages > 1) {
+      h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">' +
+        '<button class="btn out" style="width:auto;min-width:120px" data-act="pagePrev"' + (page === 0 ? ' disabled' : '') + '>‹ Précédent</button>' +
+        '<span class="note" aria-live="polite">Page ' + (page + 1) + ' / ' + pages + '</span>' +
+        '<button class="btn out" style="width:auto;min-width:120px" data-act="pageNext"' + (page >= pages - 1 ? ' disabled' : '') + '>Suivant ›</button></div>' +
+        '<div class="note center">' + list.length + ' chantiers' + (q ? ' trouvés' : '') + ' · ' + PAGE + ' par page</div>';
+    }
     return h;
   },
 
@@ -421,6 +432,7 @@ document.addEventListener('input', function (e) {
   var el = e.target, p = el.getAttribute && el.getAttribute('data-bind');
   if (!p || el.type === 'checkbox') return;
   setPath(p, el.value);
+  if (p === 'search') S.page = 0;
   if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
 });
 document.addEventListener('change', function (e) {
