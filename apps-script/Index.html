@@ -173,6 +173,7 @@ var ICON = {
   plus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   search: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
   users: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 010 7M18.5 14.8c1.6.8 2.6 2.6 3 5.2"/></svg>',
+  image: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M20.5 16l-5-5-8 8.5"/></svg>',
   camera: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   drop: '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c3 4 5 6.5 5 9.5a5 5 0 01-10 0C7 9.5 9 7 12 3z"/><path d="M10 14.5a2 2 0 002 2"/></svg>'
 };
@@ -864,7 +865,7 @@ function photoBlock(slot, req) {
     (list.length ? '<div class="thumbs">' + list.map(function (p, i) {
       return '<div class="thumb"><img alt="' + esc(slot) + ' ' + (i + 1) + '" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removePhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>';
     }).join('') + '</div>' : '') +
-    '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + (list.length ? 'Ajouter une photo' : 'Prendre une photo') + '</button></div>';
+    '<div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Photo</button>' + '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '|gal">' + ICON.image + 'Galerie</button>' + '</div></div>';
 }
 
 V.mes = function () {
@@ -883,7 +884,7 @@ V.mes = function () {
       var slot = w === 'UE' ? 'Plaque signalétique UE' : 'Plaque signalétique UI';
       h += '<div class="card">' + field('Unité ' + (w === 'UE' ? 'extérieure' : 'intérieure') + (w === 'UE' && !m.add ? ' *' : ''), 'mes.d.serie' + w, { ph: 'N° de série sur la plaque' }) +
         (m.reading === w ? '<div class="note" style="display:flex;align-items:center;gap:10px"><span class="spin" style="width:20px;height:20px;margin:0"></span>Lecture de la plaque…</div>' :
-          '<button type="button" class="btn out" style="min-height:46px" data-act="readPlate" data-arg="' + w + '">' + ICON.camera + 'Lire sur la photo de la plaque</button>') +
+          '<div class="note">Lire le n° sur la photo de la plaque :</div><div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="readPlate" data-arg="' + w + '">' + ICON.camera + 'Photo</button>' + '<button type="button" class="btn out" style="min-height:46px" data-act="readPlate" data-arg="' + w + '|gal">' + ICON.image + 'Galerie</button>' + '</div>') +
         (m.photos[slot].length ? '<div class="note">Photo de la plaque gardée pour le rapport (' + m.photos[slot].length + ').</div>' : '') + '</div>';
     });
     h += '<div class="note">La photo de la plaque est lue automatiquement et rangée avec les photos du rapport. Vérifie toujours le numéro.</div>';
@@ -965,7 +966,8 @@ V.mes = function () {
   var last = m.step === steps.length - 1;
   h += '<div class="g2" style="margin-top:4px">' + '<button class="btn out" data-act="mesPrev">Retour</button>' +
     '<button class="btn" data-act="' + (last ? 'mesValidate' : 'mesNext') + '">' + (last ? (m.add ? 'Valider la manipulation' : 'Valider la mise en service') : 'Continuer') + '</button></div>' +
-    '<input type="file" id="photoInput" accept="image/*" class="hidden"><input type="file" id="plateInput" accept="image/*" class="hidden">';
+    '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden"><input type="file" id="photoGal" accept="image/*" class="hidden">' +
+    '<input type="file" id="plateInput" accept="image/*" capture="environment" class="hidden"><input type="file" id="plateGal" accept="image/*" class="hidden">';
   return h;
 };
 
@@ -984,10 +986,10 @@ V.rapport = function () {
         '<button type="button" class="chip" data-act="toggleRemovePhoto" data-arg="' + esc(p.id) + '">' + (gone ? 'Garder' : '✕') + '</button></div></div>';
     }).join('') +
       (added.length ? '<div class="thumbs">' + added.map(function (p, i) { return '<div class="thumb"><img alt="" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removeRapPhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>'; }).join('') + '</div>' : '') +
-      '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Ajouter une photo</button></div>';
+      '<div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Photo</button>' + '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '|gal">' + ICON.image + 'Galerie</button>' + '</div></div>';
   });
   h += '<button class="btn" data-act="saveReport">' + (mes.rapport ? 'Enregistrer et refaire le rapport' : 'Créer le rapport') + '</button>' +
-    '<input type="file" id="photoInput" accept="image/*" class="hidden">';
+    '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden"><input type="file" id="photoGal" accept="image/*" class="hidden">';
   return h;
 };
 
@@ -1024,9 +1026,9 @@ Object.assign(A, {
     if (err) { S.msg = { err: true, text: err }; render(); window.scrollTo(0, 0); return; }
     S.mes.step = Math.min(S.mes.step + 1, steps.length - 1); S.msg = null; render(); window.scrollTo(0, 0);
   },
-  pickPhoto: function (slot) { S.pendingSlot = slot; var i = document.getElementById('photoInput'); if (i) { i.value = ''; i.click(); } },
+  pickPhoto: function (a) { var g = /\|gal$/.test(a); S.pendingSlot = a.replace(/\|gal$/, ''); var i = document.getElementById(g ? 'photoGal' : 'photoInput'); if (i) { i.value = ''; i.click(); } },
   removePhoto: function (arg) { var p = arg.split('|'); S.mes.photos[p[0]].splice(+p[1], 1); render(); },
-  readPlate: function (w) { S.pendingPlate = w; var i = document.getElementById('plateInput'); if (i) { i.value = ''; i.click(); } },
+  readPlate: function (a) { var g = /\|gal$/.test(a); S.pendingPlate = a.replace(/\|gal$/, ''); var i = document.getElementById(g ? 'plateGal' : 'plateInput'); if (i) { i.value = ''; i.click(); } },
   clearSig: function () { S.mes.sig = null; render(); },
   mesValidate: function () {
     var m = S.mes, err = '';
@@ -1141,7 +1143,7 @@ Object.assign(A, {
 /* ---------- Photos, plaque et signature */
 
 document.addEventListener('change', function (e) {
-  var id = e.target.id;
+  var id = { photoGal: 'photoInput', plateGal: 'plateInput' }[e.target.id] || e.target.id;
   if (id !== 'photoInput' && id !== 'plateInput') return;
   var file = e.target.files && e.target.files[0];
   if (!file || (!S.mes && !S.rap)) return;
