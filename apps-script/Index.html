@@ -82,22 +82,37 @@ function store(k, v) { try { if (v === null) localStorage.removeItem(k); else lo
 function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 
 /* ============================== Serveur ============================== */
-function call(action, data) {
+function rawCall(action, data) {
   return new Promise(function (resolve, reject) {
     google.script.run
       .withSuccessHandler(function (r) {
         if (r && r.ok) return resolve(r.data);
-        var err = (r && r.error) || 'Erreur inconnue';
-        if (err === 'SESSION') { sessionLost(); return reject(new Error('Session expirée, reconnecte-toi.')); }
-        reject(new Error(err));
+        var e = new Error((r && r.error) || 'Erreur inconnue'); e.code = r && r.error; reject(e);
       })
       .withFailureHandler(function (e) { reject(new Error(e && e.message ? e.message : 'Connexion impossible')); })
       .api({ action: action, token: S.token, data: data || {} });
   });
 }
+/** Reconnexion silencieuse avec le jeton « rester connecté » (prolonge les 30 jours). */
+function resume() {
+  var r = load('are_remember');
+  if (!r) return Promise.reject(new Error('SESSION'));
+  return rawCall('resume', { remember: r }).then(function (s) { S.token = s.token; S.user = s.user; store('are_token', s.token); return s; })
+    .catch(function (e) { if (e.code === 'SESSION') store('are_remember', null); throw e; });
+}
+function call(action, data) {
+  return rawCall(action, data).catch(function (e) {
+    if (e.code !== 'SESSION') throw e;
+    // session de 6 h expirée : on tente la reconnexion automatique puis on rejoue l'action
+    return resume().then(function () { return rawCall(action, data); }).catch(function (e2) {
+      if (e2.code === 'SESSION' || e2.message === 'SESSION') { sessionLost(); throw new Error('Session expirée, reconnecte-toi.'); }
+      throw e2;
+    });
+  });
+}
 function sessionLost() {
   S.token = null; S.user = null; store('are_token', null);
-  S.stack = []; S.form = { email: '', password: '' }; S.screen = 'login'; S.msg = { err: true, text: 'Session expirée, reconnecte-toi.' }; render();
+  S.stack = []; S.form = { email: '', password: '', remember: true }; S.screen = 'login'; S.msg = { err: true, text: 'Session expirée, reconnecte-toi.' }; render();
 }
 function run(promise, okText) {
   S.busy = true; render();
@@ -155,11 +170,11 @@ var A = {
     if (d.password !== d.confirm) { S.msg = { err: true, text: 'Les deux mots de passe ne sont pas identiques.' }; return render(); }
     run(call('setup', { email: d.email, password: d.password, prenom: d.prenom, nom: d.nom })).then(loggedIn);
   },
-  doLogin: function () { run(call('login', { email: S.form.email, password: S.form.password })).then(loggedIn); },
+  doLogin: function () { run(rawCall('login', { email: S.form.email, password: S.form.password, remember: S.form.remember !== false })).then(loggedIn); },
   logout: function (arg) {
-    call('logout').catch(function () {});
-    S.token = null; S.user = null; store('are_token', null); S.stack = [];
-    S.form = { email: '', password: '' }; S.screen = 'login';
+    rawCall('logout', { remember: load('are_remember') }).catch(function () {});
+    S.token = null; S.user = null; store('are_token', null); store('are_remember', null); S.stack = [];
+    S.form = { email: '', password: '', remember: true }; S.screen = 'login';
     S.msg = arg === 'switch' ? { text: 'Changement d’opérateur : le nouvel opérateur se connecte avec son e-mail et son mot de passe.' } : null;
     render();
   },
@@ -183,14 +198,18 @@ var A = {
   setInflam: function (v) { S.form.inflam = v; render(); },
   startMes: function () { S.msg = { text: 'La mise en service arrive avec la livraison 2.' }; render(); },
   changePassword: function () {
-    run(call('changePassword', S.pwd), 'Mot de passe modifié.').then(function () { S.pwd = { oldPassword: '', newPassword: '' }; render(); });
+    run(call('changePassword', { oldPassword: S.pwd.oldPassword, newPassword: S.pwd.newPassword, remember: load('are_remember') }), 'Mot de passe modifié. Tes autres appareils ont été déconnectés.').then(function () { S.pwd = { oldPassword: '', newPassword: '' }; render(); });
   },
   goAdmin: function () { go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
   newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', email2: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
-  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, email2: o.email2 || '', role: o.role, attestation: o.attestation, password: '', actif: o.actif }; go('opForm'); },
+  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, email2: o.email2 || '', role: o.role, attestation: o.attestation, password: '', actif: o.actif, appareils: o.appareils, derniereUtilisation: o.derniereUtilisation }; go('opForm'); },
   toggleActif: function () {
     var f = S.opForm, on = !f.actif;
     run(call('setOperateurActif', { id: f.id, actif: on }), on ? 'Compte réactivé.' : 'Compte désactivé : il ne peut plus se connecter.').then(function (l) { S.ops = l; f.actif = on; render(); });
+  },
+  disconnectOp: function () {
+    var f = S.opForm;
+    run(call('disconnectOperateur', { id: f.id }), 'Déconnecté de tous ses appareils.').then(function (l) { S.ops = l; f.appareils = 0; render(); });
   },
   askDelete: function () { S.confirmDelete = true; render(); },
   cancelDelete: function () { S.confirmDelete = false; render(); },
@@ -209,6 +228,7 @@ var A = {
 };
 function loggedIn(r) {
   S.token = r.token; S.user = r.user; store('are_token', r.token);
+  store('are_remember', r.remember || null);
   S.form = null; S.stack = []; S.screen = 'home'; S.msg = null; loadChantiers();
 }
 
@@ -249,6 +269,9 @@ var V = {
       '<div style="font-size:24px;font-weight:700">Fluides ARE</div><div class="note">Mises en service, CERFA et suivi des bouteilles</div></div>' + msgBox() +
       '<div class="card">' + field('Adresse e-mail', 'form.email', { type: 'email', auto: 'username' }) +
       field('Mot de passe', 'form.password', { type: 'password', auto: 'current-password' }) +
+      '<label style="flex-direction:row;align-items:center;gap:10px;font-size:15px;color:var(--ink);min-height:44px;cursor:pointer">' +
+      '<input type="checkbox" data-bind="form.remember"' + (S.form && S.form.remember === false ? '' : ' checked') + ' style="width:22px;height:22px;flex:0 0 auto;accent-color:var(--green)">' +
+      '<span>Rester connecté sur cet appareil<br><span class="note">30 jours, prolongés à chaque ouverture. À décocher sur un appareil partagé.</span></span></label>' +
       '<button class="btn" data-act="doLogin"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Connexion…' : 'Se connecter') + '</button></div>' +
       '<div class="note center">Les comptes sont créés par l’administrateur. Mot de passe oublié : contacte-le.</div>';
   },
@@ -351,6 +374,9 @@ var V = {
       '<button class="btn" data-act="saveOp"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le compte') + '</button>' +
       (f.id && f.id !== S.user.id ?
         '<div class="sec" style="margin-top:12px">Gérer ce compte</div>' +
+        '<div class="rows"><div class="row"><span>Appareils « rester connecté »</span><span>' + (f.appareils || 0) + '</span></div>' +
+        '<div class="row"><span>Dernière utilisation</span><span>' + esc(f.derniereUtilisation || '—') + '</span></div></div>' +
+        '<button class="btn out" data-act="disconnectOp">Déconnecter tous ses appareils</button><div class="note">Coupe tout de suite sa session sur tous ses téléphones et ordinateurs : il devra se reconnecter avec son mot de passe (téléphone perdu ou volé, par exemple).</div>' +
         (f.actif ?
           '<button class="btn out" data-act="toggleActif">Désactiver le compte</button><div class="note">L’opérateur ne peut plus se connecter, mais son nom reste sur les CERFA déjà signés. À utiliser quand quelqu’un quitte l’entreprise.</div>' :
           '<button class="btn out" data-act="toggleActif">Réactiver le compte</button>') +
@@ -393,13 +419,14 @@ document.addEventListener('click', function (e) {
 });
 document.addEventListener('input', function (e) {
   var el = e.target, p = el.getAttribute && el.getAttribute('data-bind');
-  if (!p) return;
+  if (!p || el.type === 'checkbox') return;
   setPath(p, el.value);
   if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
 });
 document.addEventListener('change', function (e) {
   var el = e.target, p = el.getAttribute && el.getAttribute('data-bind');
   if (!p) return;
+  if (el.type === 'checkbox') { setPath(p, el.checked); return; }
   setPath(p, el.value);
   if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
 });
@@ -415,9 +442,11 @@ document.addEventListener('keydown', function (e) {
   call('status').then(function (st) {
     S.status = st;
     if (st.needsSetup) { S.form = { prenom: st.adminPrenom || '', nom: '', email: st.ownerEmail || '', password: '', confirm: '' }; S.screen = 'setup'; return render(); }
-    if (!S.token) { S.form = { email: '', password: '' }; S.screen = 'login'; return render(); }
-    call('me').then(function (u) { S.user = u; S.screen = 'home'; loadChantiers(); })
-      .catch(function () { S.form = { email: '', password: '' }; if (S.screen !== 'login') { S.screen = 'login'; S.msg = null; render(); } });
+    var goLogin = function () { S.form = { email: '', password: '', remember: true }; S.screen = 'login'; S.msg = null; render(); };
+    var first = S.token ? rawCall('me').then(function (u) { S.user = u; }) : Promise.reject(new Error('SESSION'));
+    first.catch(function () { return resume(); })          // reconnexion automatique (« rester connecté »)
+      .then(function () { S.screen = 'home'; loadChantiers(); })
+      .catch(goLogin);
   }).catch(function (e) {
     document.getElementById('app').innerHTML = '<main><div class="msg err">Impossible de joindre le serveur : ' + esc(e.message) + '</div></main>';
   });

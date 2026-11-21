@@ -26,11 +26,11 @@ function api(req) {
   try {
     req = req || {};
     var action = req.action, data = req.data || {};
-    var pub = { status: status_, setup: setup_, login: login_ };
+    var pub = { status: status_, setup: setup_, login: login_, resume: resume_ };
     if (pub[action]) return ok_(pub[action](data));
     var user = auth_(req.token);
     var priv = {
-      logout: function () { CacheService.getScriptCache().remove('s_' + req.token); return true; },
+      logout: function (d) { CacheService.getScriptCache().remove('s_' + req.token); forgetDevice_(d.remember); return true; },
       me: function () { return user; },
       listChantiers: listChantiers_,
       getChantier: function (d) { return getChantier_(d.id); },
@@ -40,7 +40,8 @@ function api(req) {
       listOperateurs: function () { admin_(user); return listOperateurs_(); },
       saveOperateur: function (d) { admin_(user); return saveOperateur_(d, user); },
       setOperateurActif: function (d) { admin_(user); return setOperateurActif_(d, user); },
-      deleteOperateur: function (d) { admin_(user); return deleteOperateur_(d, user); }
+      deleteOperateur: function (d) { admin_(user); return deleteOperateur_(d, user); },
+      disconnectOperateur: function (d) { admin_(user); return disconnectOperateur_(d, user); }
     };
     if (!priv[action]) throw new Error('Action inconnue : ' + action);
     return ok_(priv[action](data));
@@ -199,6 +200,7 @@ function setOperateurActif_(d, user) {
   var row = t.rows.filter(function (r) { return r['ID'] === d.id; })[0];
   if (!row) throw new Error('Compte introuvable.');
   writeRow_(t, { 'Actif': d.actif ? 'oui' : 'non' }, row._row);
+  if (!d.actif) { revokeRemember_(d.id); cutSessions_(d.id); }
   return listOperateurs_();
 }
 
@@ -215,6 +217,7 @@ function deleteOperateur_(d, user) {
   });
   if (used) throw new Error('Ce compte apparaît dans le registre des mouvements : il ne peut pas être supprimé, désactive-le plutôt.');
   t.sh.deleteRow(row._row);
+  revokeRemember_(d.id);
   if (email) {
     var c = comptes_();
     var rec = c.rows.filter(function (r) { return String(r['E-mail']).toLowerCase() === email; })[0];
@@ -244,7 +247,7 @@ function setup_(d) {
   if (!adminRow) rec['ID'] = nextId_(t.rows, 'OP', 'ID');
   writeRow_(t, rec, adminRow ? adminRow._row : null);
   setPassword_(email, d.password);
-  return login_({ email: email, password: d.password });
+  return login_({ email: email, password: d.password, remember: d.remember !== false });
 }
 
 function login_(d) {
@@ -256,9 +259,84 @@ function login_(d) {
   })[0];
   if (!op || !checkPassword_(op.email, d.password || '')) throw new Error('E-mail ou mot de passe incorrect.');
   if (!op.actif) throw new Error('Ce compte est désactivé. Contacte l’administrateur.');
+  var out = issueSession_(op);
+  if (d.remember) out.remember = createRemember_(op.id);
+  return out;
+}
+
+function issueSession_(op) {
   var token = Utilities.getUuid() + Utilities.getUuid().slice(0, 8);
-  CacheService.getScriptCache().put('s_' + token, JSON.stringify({ id: op.id, email: op.email }), APP.sessionSeconds);
+  CacheService.getScriptCache().put('s_' + token, JSON.stringify({ id: op.id, email: op.email, at: Date.now() }), APP.sessionSeconds);
   return { token: token, user: op };
+}
+
+/** Coupe les sessions en cours d'un opérateur : toute session ouverte avant cet instant est refusée. */
+function cutSessions_(opId) {
+  PropertiesService.getScriptProperties().setProperty('cut_' + opId, String(Date.now()));
+}
+
+/** Admin : déconnecte un opérateur de tous ses appareils. */
+function disconnectOperateur_(d, user) {
+  if (d.id === user.id) throw new Error('Pour toi-même, utilise « Se déconnecter » dans ton profil.');
+  cutSessions_(d.id);
+  revokeRemember_(d.id);
+  return listOperateurs_();
+}
+
+/* ------------------------------------------------------------------ « Rester connecté » (30 jours glissants) */
+
+var REMEMBER_DAYS = 30;
+
+function sessions_() {
+  var sh = ss_().getSheetByName('_Sessions');
+  if (!sh) {
+    sh = ss_().insertSheet('_Sessions');
+    sh.getRange(1, 1, 1, 5).setValues([['Empreinte', 'ID opérateur', 'Créé le (ms)', 'Expire le (ms)', 'Dernière utilisation (ms)']]);
+    sh.hideSheet();
+  }
+  return readTable_('_Sessions');
+}
+
+function tokenHash_(token) {
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'remember|' + token, Utilities.Charset.UTF_8));
+}
+
+function createRemember_(opId) {
+  var t = sessions_();
+  var now = Date.now();
+  // ménage : retire les jetons expirés
+  t.rows.filter(function (r) { return Number(r['Expire le (ms)']) < now; }).reverse().forEach(function (r) { t.sh.deleteRow(r._row); });
+  t = sessions_();
+  var token = Utilities.getUuid() + Utilities.getUuid();
+  writeRow_(t, { 'Empreinte': tokenHash_(token), 'ID opérateur': opId, 'Créé le (ms)': now, 'Expire le (ms)': now + REMEMBER_DAYS * 864e5, 'Dernière utilisation (ms)': now });
+  return token;
+}
+
+/** Reconnexion automatique : valide le jeton, prolonge de 30 jours, ouvre une session. */
+function resume_(d) {
+  if (!d.remember) throw new Error('SESSION');
+  var t = sessions_();
+  var h = tokenHash_(d.remember), now = Date.now();
+  var rec = t.rows.filter(function (r) { return r['Empreinte'] === h; })[0];
+  if (!rec || Number(rec['Expire le (ms)']) < now) throw new Error('SESSION');
+  var op = readTable_(SH.ops).rows.map(operatorPublic_).filter(function (o) { return o.id === rec['ID opérateur']; })[0];
+  if (!op || !op.actif) { t.sh.deleteRow(rec._row); throw new Error('SESSION'); }
+  writeRow_(t, { 'Expire le (ms)': now + REMEMBER_DAYS * 864e5, 'Dernière utilisation (ms)': now }, rec._row);
+  return issueSession_(op);
+}
+
+/** Supprime les jetons « rester connecté » d'un opérateur (sauf, éventuellement, celui de l'appareil en cours). */
+function revokeRemember_(opId, keepToken) {
+  var t = sessions_();
+  var keep = keepToken ? tokenHash_(keepToken) : null;
+  t.rows.filter(function (r) { return r['ID opérateur'] === opId && r['Empreinte'] !== keep; })
+    .reverse().forEach(function (r) { t.sh.deleteRow(r._row); });
+}
+
+function forgetDevice_(token) {
+  if (!token) return;
+  var t = sessions_(), h = tokenHash_(token);
+  t.rows.filter(function (r) { return r['Empreinte'] === h; }).reverse().forEach(function (r) { t.sh.deleteRow(r._row); });
 }
 
 function auth_(token) {
@@ -268,6 +346,8 @@ function auth_(token) {
   var s = JSON.parse(raw);
   var op = readTable_(SH.ops).rows.map(operatorPublic_).filter(function (o) { return o.id === s.id; })[0];
   if (!op || !op.actif || op.email.toLowerCase() !== s.email.toLowerCase()) throw new Error('SESSION');
+  var cut = Number(PropertiesService.getScriptProperties().getProperty('cut_' + op.id) || 0);
+  if (cut && (s.at || 0) < cut) { CacheService.getScriptCache().remove('s_' + token); throw new Error('SESSION'); }
   return op;
 }
 
@@ -276,13 +356,21 @@ function admin_(user) { if (user.role !== 'admin') throw new Error('Réservé à
 function changePassword_(user, d) {
   if (!checkPassword_(user.email, d.oldPassword || '')) throw new Error('Mot de passe actuel incorrect.');
   setPassword_(user.email, d.newPassword);
+  revokeRemember_(user.id, d.remember); // déconnecte les autres appareils, garde celui-ci
   return true;
 }
 
 function listOperateurs_() {
+  var now = Date.now();
+  var sess = sessions_().rows.filter(function (r) { return Number(r['Expire le (ms)']) >= now; });
+  var tz = Session.getScriptTimeZone();
   return readTable_(SH.ops).rows.map(function (o) {
     var p = operatorPublic_(o);
     p.hasPassword = hasPassword_(p.email);
+    var mine = sess.filter(function (r) { return r['ID opérateur'] === p.id; });
+    p.appareils = mine.length;
+    var last = mine.reduce(function (m, r) { return Math.max(m, Number(r['Dernière utilisation (ms)']) || 0); }, 0);
+    p.derniereUtilisation = last ? Utilities.formatDate(new Date(last), tz, 'dd/MM/yyyy HH:mm') : '';
     return p;
   });
 }
@@ -312,7 +400,11 @@ function saveOperateur_(d, user) {
   };
   if (!row) rec['ID'] = nextId_(t.rows, 'OP', 'ID');
   writeRow_(t, rec, row ? row._row : null);
-  if (d.password) setPassword_(email, d.password);
+  if (d.password) {
+    setPassword_(email, d.password);
+    if (row && row['ID'] !== user.id) { revokeRemember_(row['ID']); cutSessions_(row['ID']); } // mot de passe réinitialisé : appareils déconnectés
+    else if (row) revokeRemember_(row['ID'], d.remember);
+  }
   else if (row && oldEmail && oldEmail !== email) renamePassword_(oldEmail, email); // garde le mot de passe si l'e-mail principal change
   return listOperateurs_();
 }
