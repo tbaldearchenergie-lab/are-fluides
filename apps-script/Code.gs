@@ -941,7 +941,11 @@ function nextCerfa_(dateFr) {
 
 function cerfaFields_(m) {
   var p = params_();
-  var t = {}, checks = ['Case_MiseService'];
+  var t = {}, checks = [];
+  var NAT = { assemblage: 'Case_Assemblage', mes: 'Case_MiseService', modif: 'Case_Modif', maintenance: 'Case_Maintenance', ctrlPerio: 'Case_CtrlPerio', ctrlNonPerio: 'Case_CtrlNonPerio', demantel: 'Case_Demantel', autre: 'Case_Autre' };
+  var nat = Array.isArray(m.nature) && m.nature.length ? m.nature : ['mes'];
+  nat.forEach(function (k) { if (NAT[k] && checks.indexOf(NAT[k]) < 0) checks.push(NAT[k]); });
+  if (nat.indexOf('autre') >= 0) t['Autre'] = String(m.natureAutre || '').slice(0, 60);
   t['Fiche_no'] = m.cerfa;
   t['Operateur'] = [p['Raison sociale'], p['Adresse'], p['SIRET'] ? 'SIRET : ' + p['SIRET'] : ''].filter(Boolean).join('\n');
   t['Attestation_no'] = String(p['N° d’attestation de capacité'] || '');
@@ -980,7 +984,8 @@ function cerfaFields_(m) {
 function observations_(m) {
   var s = [];
   if (m.op === 'relache') {
-    s.push('Mise en service : tirage au vide' + (m.vide ? ' (' + m.vide + ' microns' + (m.tenue ? ', tenue ' + m.tenue + ' min' : '') + ')' : '') + ' et ouverture des vannes, charge usine ' + fr_(m.chargeUsine, 2) + ' kg.');
+    var rem = { stable: 'remontée stable sous 1 000 microns', humidite: 'remontée puis stabilisation', fuite: 'remontée sans arrêt' }[m.remontee];
+    s.push('Mise en service : tirage au vide' + (m.vide ? ' (' + m.vide + ' microns' + (m.tenue ? ' en ' + m.tenue + ' min' : '') + (rem ? ', ' + rem : '') + ')' : '') + ' et ouverture des vannes, charge usine ' + fr_(m.chargeUsine, 2) + ' kg.');
   } else if (m.op === 'ajout') {
     s.push('Mise en service : ajout de charge ' + fr_(m.quantite, 2) + ' kg (bouteille ' + m.bouteille + ').');
   } else if (m.op === 'recup') {
@@ -1081,7 +1086,8 @@ function saveManip_(d, user) {
       machine: [c.marque, c.modele].filter(Boolean).join(' '), serieUE: d.serieUE || c.serieUE || '', fluide: c.fluide, gwp: gwp,
       inflammable: fl ? fl.inflammable : String(c.inflam).toLowerCase() === 'oui', chargeUsine: chargeUsine, chargeTotale: chargeTotale,
       quantite: quantite, bouteille: d.bouteille || '', distributeur: distributeur, detecteur: detecteur,
-      fuite: d.fuite === 'oui' ? 'oui' : 'non', fuites: d.fuites || [], vide: d.vide || '', tenue: d.tenue || '',
+      fuite: d.fuite === 'oui' ? 'oui' : 'non', fuites: d.fuites || [], vide: d.vide || '', tenue: d.tenue || '', remontee: d.remontee || '',
+      nature: Array.isArray(d.nature) ? d.nature.filter(function (k) { return /^(assemblage|mes|modif|maintenance|ctrlPerio|ctrlNonPerio|demantel|autre)$/.test(k); }) : ['mes'], natureAutre: String(d.natureAutre || '').trim(),
       longueur: c.longueur, precharge: c.precharge, gpm: c.gpm, observations: d.observations || '',
       operateur: opNom, attestation: user.attestation || ''
     };

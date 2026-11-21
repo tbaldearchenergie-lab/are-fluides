@@ -83,6 +83,8 @@
   .sigwrap{position:relative;border:1.5px dashed var(--field);border-radius:12px;background:#FBFCFB;height:170px}
   .sigwrap canvas{width:100%;height:100%;display:block;touch-action:none;border-radius:12px}
   .sighint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);pointer-events:none;font-size:15px}
+  .rappel{background:#EAF1F8;border-radius:14px;padding:14px 16px;font-size:13.5px;line-height:1.45;color:#16324F}
+  .rappel ul{margin:6px 0 0;padding-left:18px}.rappel li{margin:3px 0}
   .manip{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
   .manip .chip{min-height:40px;padding:0 12px}
 </style>
@@ -589,6 +591,8 @@ var TITLES = { mes: 'Mise en service', mesDone: 'Mise en service', setup: 'Premi
 
 /* ============================== Livraison 2 : mise en service ============================== */
 var PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+var NATURES = [['assemblage', 'Assemblage'], ['mes', 'Mise en service'], ['modif', 'Modification'], ['maintenance', 'Maintenance'],
+  ['ctrlPerio', 'Contrôle d’étanchéité périodique'], ['ctrlNonPerio', 'Contrôle d’étanchéité non périodique'], ['demantel', 'Démantèlement'], ['autre', 'Autre']];
 var MES_STEP_LABELS = { equip: 'Équipement', op: 'Opération', fluide: 'Fluide', etanch: 'Étanchéité', photos: 'Photos' };
 
 function isoToFr(iso) { var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; }
@@ -674,7 +678,7 @@ function newMesState(addOnly) {
   var d = {
     date: todayIso(), serieUE: (mes && mes.serieUE) || c.serieUE || '', serieUI: (mes && mes.serieUI) || c.serieUI || '',
     op: '', chargeUsine: c.chargeUsine || (ctx.machine && ctx.machine.charge) || '', vide: '', tenue: '',
-    bouteille: '', poidsAvant: '', poidsApres: '', distributeur: ctx.distributeurs.length === 1 ? ctx.distributeurs[0].id : '',
+    nature: ['mes'], natureAutre: '', remontee: '', bouteille: '', poidsAvant: '', poidsApres: '', distributeur: ctx.distributeurs.length === 1 ? ctx.distributeurs[0].id : '',
     detecteur: dets.length === 1 ? dets[0].id : '', fuite: 'non', fuites: [{ loc: '', rep: 'realisee' }, { loc: '', rep: 'realisee' }, { loc: '', rep: 'realisee' }], observations: ''
   };
   var photos = {}; ctx.photoSlots.forEach(function (s) { photos[s] = []; });
@@ -689,6 +693,8 @@ function mesSteps() {
 }
 
 /** Complément de charge d'après les liaisons du chantier. */
+/** Durée minimale du tirage au vide : 30 min + 1 min par mètre de liaison au-delà de 15 m. */
+function dureeMinVide() { var L = numOrNaN(S.ctx.chantier.longueur); return 30 + (isFinite(L) && L > 15 ? Math.ceil(L - 15) : 0); }
 function complement() {
   var c = S.ctx.chantier, L = numOrNaN(c.longueur), P = numOrNaN(c.precharge), G = numOrNaN(c.gpm);
   return isFinite(L) && isFinite(P) && isFinite(G) ? Math.max(0, L - P) * G / 1000 : NaN;
@@ -715,8 +721,19 @@ function mesCheckStep(key) {
     if (!m.add && !String(d.serieUE).trim()) return 'Saisis le n° de série de l’unité extérieure (ou lis-le sur la photo de la plaque).';
   }
   if (key === 'op' && !d.op) return 'Choisis l’opération réalisée.';
+  if (key === 'op' && d.op !== 'mes' && !d.nature.length) return 'Coche la nature de l’intervention (case 4 du CERFA).';
+  if (key === 'op' && d.nature.indexOf('autre') >= 0 && d.op !== 'mes' && !String(d.natureAutre).trim()) return 'Précise la nature « Autre » de l’intervention.';
   if (key === 'fluide') {
-    if (d.op === 'relache' && !isFinite(numOrNaN(d.chargeUsine))) return 'Indique la charge usine de l’unité extérieure.';
+    if (d.op === 'relache') {
+      var vide = numOrNaN(d.vide), duree = numOrNaN(d.tenue), dmin = dureeMinVide();
+      if (!isFinite(vide)) return 'Indique le vide atteint (microns).';
+      if (vide >= 500) return 'Vide insuffisant : l’objectif est moins de 500 microns. Continue le tirage au vide.';
+      if (!isFinite(duree)) return 'Indique la durée du tirage au vide.';
+      if (duree < dmin) return 'Durée trop courte : ' + dmin + ' min minimum pour ce chantier.';
+      if (!d.remontee) return 'Indique le résultat du test de remontée.';
+      if (d.remontee !== 'stable') return d.remontee === 'fuite' ? 'Remontée sans arrêt : fuite à rechercher (test à l’azote) avant la mise en service.' : 'Remontée puis stabilisation : continue le tirage au vide puis refais le test.';
+      if (!isFinite(numOrNaN(d.chargeUsine))) return 'Indique la charge usine de l’unité extérieure.';
+    }
     if (d.op === 'ajout' || d.op === 'recup') {
       if (!d.bouteille) return 'Choisis la bouteille utilisée.';
       if (!isFinite(numOrNaN(d.poidsAvant)) || !isFinite(numOrNaN(d.poidsApres))) return 'Saisis les deux pesées.';
@@ -831,6 +848,11 @@ V.mes = function () {
       var desc = { mes: 'La machine démarre, aucun fluide n’est manipulé. Pas de CERFA.', relache: 'Le fluide de l’unité extérieure est relâché dans les liaisons.', ajout: 'Du fluide neuf est ajouté depuis une bouteille.', recup: 'Le fluide est récupéré dans une bouteille de récupération.' }[k];
       return '<button type="button" class="item opt' + (d.op === k ? ' on' : '') + '" data-act="setOp" data-arg="' + k + '"><b style="font-size:16px">' + esc(ctx.ops[k]) + '</b><span class="note">' + desc + '</span></button>';
     }).join('') + '<div class="note">Chaque manipulation de fluide donne son propre CERFA. Tu pourras en ajouter une autre à la fin.</div>';
+    if (d.op && d.op !== 'mes') {
+      h += '<div class="sec">[4] Nature de l’intervention (CERFA) *</div><div class="card"><div class="chips">' + NATURES.map(function (n) {
+        return '<button type="button" class="chip' + (d.nature.indexOf(n[0]) >= 0 ? ' on' : '') + '" data-act="toggleNature" data-arg="' + n[0] + '">' + esc(n[1]) + '</button>';
+      }).join('') + '</div>' + (d.nature.indexOf('autre') >= 0 ? field('Autre (préciser)', 'mes.d.natureAutre') : '') + '<div class="note">Plusieurs cases possibles, comme sur le CERFA.</div></div>';
+    }
   }
 
   if (key === 'fluide') {
@@ -838,9 +860,20 @@ V.mes = function () {
     h += '<div class="sec">' + esc(ctx.ops[d.op]) + '</div>';
     if (d.op === 'relache') {
       var gwp = ctx.fluide ? ctx.fluide.gwp : NaN;
-      h += '<div class="card"><b>Tirage au vide</b><div class="g2">' + field('Vide atteint (microns)', 'mes.d.vide', { mode: 'numeric' }) + field('Tenue du vide (min)', 'mes.d.tenue', { mode: 'numeric' }) + '</div>' +
+      var dmin = dureeMinVide();
+      h += '<div class="rappel"><b>Tirage au vide – rappel</b><ul>' +
+        '<li>Objectif : moins de 500 microns, lu au vacuomètre électronique.</li>' +
+        '<li>Durée mini : 30 min, plus 1 min par mètre de liaison au-delà de 15 m. Sur un multisplit, on additionne toutes les liaisons. On respecte la durée de la notice si elle est plus longue.</li>' +
+        '<li>Test de remontée : pompe isolée, on attend 10 min.<ul><li>Stable sous 1 000 microns : c’est validé.</li><li>Remonte puis se stabilise : il reste de l’humidité, on continue le tirage.</li><li>Remonte sans arrêt : il y a une fuite, on refait le test à l’azote.</li></ul></li>' +
+        '<li>On note le niveau atteint, la durée et le résultat de la remontée.</li></ul></div>';
+      h += '<div class="card"><b>Tirage au vide</b><div class="g2">' + field('Vide atteint (microns) *', 'mes.d.vide', { mode: 'numeric', ph: 'moins de 500' }) +
+        field('Durée du tirage (min) *', 'mes.d.tenue', { mode: 'numeric', ph: 'min. ' + dmin + ' min' }) + '</div>' +
+        '<div class="note">Durée minimale pour ce chantier : <b>' + dmin + ' min</b>' + (numOrNaN(c.longueur) > 15 ? ' (30 min + ' + Math.ceil(numOrNaN(c.longueur) - 15) + ' min pour ' + esc(c.longueur) + ' m de liaisons)' : ' (liaisons de 15 m ou moins)') + '.</div>' +
+        '<div class="note">Test de remontée (10 min, pompe isolée) *</div>' + chips([['stable', 'Stable sous 1 000 microns'], ['humidite', 'Remonte puis se stabilise'], ['fuite', 'Remonte sans arrêt']], d.remontee, 'setRemontee') +
+        (d.remontee === 'humidite' ? '<div class="msg err">Il reste de l’humidité : continue le tirage au vide, puis refais le test.</div>' : '') +
+        (d.remontee === 'fuite' ? '<div class="msg err">Il y a une fuite : refais le test à l’azote avant de mettre en service.</div>' : '') +
         (ctx.pompe ? '<div class="note">Pompe à vide ' + esc(ctx.pompe.label) + '.</div>' : '') + '</div>' +
-        '<div class="card">' + field('Charge usine de l’unité extérieure (kg)', 'mes.d.chargeUsine', { mode: 'decimal' }) +
+        '<div class="card">' + (c.chargeUsine ? '<div class="rows" style="padding:0 4px"><div class="row"><span>Charge usine (fiche chantier)</span><span>' + esc(c.chargeUsine) + ' kg</span></div></div>' : field('Charge usine de l’unité extérieure (kg) *', 'mes.d.chargeUsine', { mode: 'decimal', ph: 'Absente de la fiche chantier' })) +
         '<div class="rows" style="padding:0 4px"><div class="row"><span>Liaisons / précharge</span><span>' + esc((c.longueur || '?') + ' m / ' + (c.precharge || '?') + ' m') + '</span></div>' +
         '<div class="row"><span>Équivalent CO₂' + (isFinite(gwp) ? ' (GWP ' + esc(String(gwp).replace('.', ',')) + ')' : '') + '</span><span id="mesTeq">' + mesTeqTxt() + '</span></div></div>' +
         (comp > 0 ? '<div class="msg err">Les liaisons dépassent la précharge : il faudra environ ' + frNum(comp) + ' kg en plus. Ajoute ensuite une manipulation « Ajout de charge ».</div>' : '') + '</div>';
@@ -880,7 +913,7 @@ V.mes = function () {
 
   if (key === 'photos') {
     h += '<div class="sec">Photos du rapport</div>' + ctx.photoSlots.map(function (s) { return photoBlock(s, !m.add && ctx.photoRequired.indexOf(s) >= 0); }).join('') +
-      '<div class="sec">Signature</div><div class="card"><div class="sigwrap"><canvas id="sigCanvas" aria-label="Zone de signature"></canvas>' + (m.sig ? '' : '<span class="sighint">Signe ici avec le doigt</span>') + '</div>' +
+      '<div class="sec">Signature *</div><div class="card"><div class="sigwrap"><canvas id="sigCanvas" aria-label="Zone de signature"></canvas>' + (m.sig ? '' : '<span class="sighint">Signe ici avec le doigt</span>') + '</div>' +
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><span class="note">' + esc(ctx.operateur.nom) + (ctx.operateur.attestation ? ' · attestation ' + esc(ctx.operateur.attestation) : '') + '</span><button type="button" class="chip" data-act="clearSig">Effacer</button></div>' +
       '<div class="note">' + (d.op === 'mes' ? 'La signature figure sur le rapport d’installation.' : 'La signature est posée sur le CERFA, dans la case « Date et signature » de l’opérateur.') + '</div></div>';
   }
@@ -913,6 +946,8 @@ Object.assign(A, {
   addManip: function () { if (!S.ctx) return; S.mes = newMesState(true); S.msg = null; if (S.screen === 'mesDone') { S.stack = ['home']; S.screen = 'chantier'; } go('mes'); },
   backToChantier: function () { S.stack = ['home']; S.screen = 'chantier'; S.msg = null; render(); window.scrollTo(0, 0); },
   setOp: function (k) { S.mes.d.op = k; S.msg = null; render(); },
+  toggleNature: function (k) { var l = S.mes.d.nature, i = l.indexOf(k); if (i >= 0) l.splice(i, 1); else l.push(k); render(); },
+  setRemontee: function (v) { S.mes.d.remontee = v; render(); },
   setFuite: function (v) { S.mes.d.fuite = v; render(); },
   setRep0: function (v) { S.mes.d.fuites[0].rep = v; render(); },
   setRep1: function (v) { S.mes.d.fuites[1].rep = v; render(); },
@@ -944,7 +979,7 @@ Object.assign(A, {
     up().then(function () { return trimSig(m.sig).then(function (t) { sigPdf = t; }); }).then(function () {
       m.saving = 'Enregistrement…'; render();
       var data = {
-        chantierId: c.id, op: d.op, date: isoToFr(d.date), serieUE: d.serieUE, serieUI: d.serieUI, chargeUsine: d.chargeUsine, vide: d.vide, tenue: d.tenue,
+        chantierId: c.id, op: d.op, date: isoToFr(d.date), serieUE: d.serieUE, serieUI: d.serieUI, chargeUsine: d.chargeUsine, vide: d.vide, tenue: d.tenue, remontee: d.remontee, nature: d.nature, natureAutre: d.natureAutre,
         bouteille: d.bouteille, poidsAvant: d.poidsAvant, poidsApres: d.poidsApres, distributeur: d.distributeur, detecteur: d.detecteur,
         fuite: d.fuite, fuites: d.fuite === 'oui' ? d.fuites : [], observations: d.observations, photos: newPhotos(), signature: sigPdf
       };
@@ -958,7 +993,7 @@ Object.assign(A, {
         docs = docs.then(function () { m.saving = 'Création du CERFA ' + res.cerfa + '…'; render(); return makeCerfa(res.cerfa, res.fields, sigPdf.split(',')[1]); })
           .then(function (f) { result.cerfaUrl = f.url; });
       }
-      return docs.then(function () { m.saving = 'Création du rapport d’installation…'; render(); return call('buildReport', { chantierId: c.id }); })
+      return docs.then(function () { if (m.add) return; m.saving = 'Création du rapport d’installation…'; render(); return call('buildReport', { chantierId: c.id }); })
         .catch(function (e) { result.docError = e.message; });
     }).then(function () {
       return call('mesContext', { chantierId: c.id }).then(function (ctx) { S.ctx = ctx; S.cur = ctx.chantier; });
@@ -974,7 +1009,7 @@ Object.assign(A, {
   askDeleteManip: function (no) { S.confirmManip = no; render(); },
   deleteManip: function (no) {
     S.confirmManip = null; S.progress = 'Suppression de la fiche ' + no + '…'; render();
-    call('deleteManip', { cerfa: no }).then(function () { S.progress = 'Rapport d’installation…'; render(); return call('buildReport', { chantierId: S.cur.id }); })
+    call('deleteManip', { cerfa: no })
       .then(function () { S.progress = null; S.msg = { text: 'Fiche ' + no + ' supprimée.' }; return loadMes(); })
       .catch(function (e) { S.progress = null; S.msg = { err: true, text: e.message }; render(); });
   },
