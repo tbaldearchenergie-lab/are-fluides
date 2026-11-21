@@ -790,10 +790,14 @@ function viewChantierMes(c) {
   return h;
 }
 
+var PHOTO_HINTS = {
+  'Étiquette fluide posée': 'Signalétique obligatoire de l’installation frigorifique : les <b>deux étiquettes</b> doivent être posées et visibles sur la photo :<br>• l’étiquette F-Gaz (charge initiale, <b>charge complémentaire</b>, charge totale et t éq. CO₂) ;<br>• l’<b>étiquette bleue</b> « Équipement reconnu étanche » avec l’année.'
+};
 function photoBlock(slot, req) {
   var list = S.mes.photos[slot];
   return '<div class="card" style="gap:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>' + esc(slot) + '</b>' +
     (req ? '<span class="badge ' + (list.length ? '' : 'warn') + '">' + (list.length ? 'OK' : 'Obligatoire') + '</span>' : '<span class="badge grey">Facultatif</span>') + '</div>' +
+    (PHOTO_HINTS[slot] ? '<div class="note">' + PHOTO_HINTS[slot] + '</div>' : '') +
     (list.length ? '<div class="thumbs">' + list.map(function (p, i) {
       return '<div class="thumb"><img alt="' + esc(slot) + ' ' + (i + 1) + '" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removePhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>';
     }).join('') + '</div>' : '') +
