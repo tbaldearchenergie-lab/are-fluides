@@ -185,7 +185,7 @@ function machineHint(f) {
   if (!m) return f.modele && S.machines.length ? '<div class="note">Modèle absent de la base machines : remplis les champs à la main.</div>' : '';
   var bits = [m.fluide, m.charge ? 'charge usine ' + m.charge + ' kg' : '', m.precharge ? 'préchargé ' + m.precharge + ' m' : '', m.gpm ? m.gpm + ' g/m' : ''].filter(Boolean);
   var manque = [!m.precharge && /frigo/i.test(m.liaison) ? 'précharge' : '', !m.gpm && /frigo/i.test(m.liaison) ? 'g/m' : ''].filter(Boolean);
-  return '<div class="msg ok" style="margin:0">' + esc(m.marque + ' ' + m.gamme) + '<br>' + esc(bits.join(' · ')) +
+  return '<div class="msg ok" style="margin:0"><b>' + esc(m.marque + ' ' + m.gamme) + '</b>' + (m.appareil ? '<br>' + esc([m.appareil, m.usage].filter(Boolean).join(' · ')) : '') + '<br>' + esc(bits.join(' · ')) +
     (manque.length ? '<br>' + esc(manque.join(' et ')) + ' : voir la notice d’installation.' : '') +
     (m.remarque ? '<br><span style="font-size:13px">' + esc(m.remarque) + '</span>' : '') + '</div>';
 }

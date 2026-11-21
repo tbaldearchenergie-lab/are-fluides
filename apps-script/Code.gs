@@ -490,7 +490,7 @@ function listMachines_() {
       type: TYPES_INSTALL.indexOf(String(r['Type d’installation'])) >= 0 ? String(r['Type d’installation']) : '',
       liaison: String(r['Liaisons'] || ''), fluide: String(r['Fluide'] || '').toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R'),
       charge: dec(r['Charge usine (kg)']), precharge: dec(r['Longueur préchargée (m)']), gpm: dec(r['Charge supplémentaire (g/m)']),
-      remarque: String(r['Remarque'] || '')
+      remarque: String(r['Remarque'] || ''), categorie: String(r['Catégorie'] || ''), appareil: String(r['Type d’appareil'] || ''), usage: String(r['Usage'] || '')
     };
   });
 }
