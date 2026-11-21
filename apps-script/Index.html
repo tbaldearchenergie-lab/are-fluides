@@ -186,8 +186,8 @@ var A = {
     run(call('changePassword', S.pwd), 'Mot de passe modifié.').then(function () { S.pwd = { oldPassword: '', newPassword: '' }; render(); });
   },
   goAdmin: function () { go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
-  newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
-  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, role: o.role, attestation: o.attestation, password: '', actif: o.actif }; go('opForm'); },
+  newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', email2: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
+  editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, email2: o.email2 || '', role: o.role, attestation: o.attestation, password: '', actif: o.actif }; go('opForm'); },
   toggleActif: function () {
     var f = S.opForm, on = !f.actif;
     run(call('setOperateurActif', { id: f.id, actif: on }), on ? 'Compte réactivé.' : 'Compte désactivé : il ne peut plus se connecter.').then(function (l) { S.ops = l; f.actif = on; render(); });
@@ -317,7 +317,7 @@ var V = {
     var u = S.user;
     var h = msgBox() + '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><span class="avatar on" style="display:flex;align-items:center;justify-content:center">' + esc(initials(u)) + '</span>' +
       '<span><b style="font-size:18px">' + esc(u.prenom + ' ' + u.nom) + '</b><br><span class="note">' + (u.role === 'admin' ? 'Administrateur' : 'Opérateur fluides') + '</span></span></div>' +
-      '<div class="rows"><div class="row"><span>E-mail</span><span>' + esc(u.email) + '</span></div><div class="row"><span>N° d’attestation</span><span>' + esc(u.attestation || '—') + '</span></div></div>';
+      '<div class="rows"><div class="row"><span>E-mail</span><span>' + esc(u.email) + '</span></div>' + (u.email2 ? '<div class="row"><span>E-mail secondaire</span><span>' + esc(u.email2) + '</span></div>' : '') + '<div class="row"><span>N° d’attestation</span><span>' + esc(u.attestation || '—') + '</span></div></div>';
     if (isAdmin()) h += '<button class="btn dark" data-act="goAdmin">Gestion des comptes</button>';
     h += '<div class="sec">Changer mon mot de passe</div><div class="card">' + field('Mot de passe actuel', 'pwd.oldPassword', { type: 'password', auto: 'current-password' }) +
       field('Nouveau mot de passe (8 caractères minimum)', 'pwd.newPassword', { type: 'password', auto: 'new-password' }) +
@@ -332,7 +332,7 @@ var V = {
     return msgBox() + '<button class="btn" data-act="newOp">' + ICON.plus + 'Créer un compte</button><div class="sec">Comptes (' + S.ops.length + ')</div>' +
       S.ops.map(function (o) {
         return '<button class="item" data-act="editOp" data-arg="' + esc(o.id) + '"' + (o.actif ? '' : ' style="opacity:.6"') + '><span style="font-size:16px;font-weight:700">' + esc((o.prenom + ' ' + o.nom).trim() || 'Sans nom') + '</span>' +
-          '<span class="note">' + esc(o.email || 'e-mail à renseigner') + '</span><span class="chips" style="gap:6px">' + (o.actif ? '' : '<span class="badge warn">Désactivé</span>') + '<span class="badge ' + (o.role === 'admin' ? '' : 'grey') + '">' + (o.role === 'admin' ? 'Admin' : 'Opérateur') + '</span>' +
+          '<span class="note">' + esc(o.email || 'e-mail à renseigner') + (o.email2 ? ' · ' + esc(o.email2) : '') + '</span><span class="chips" style="gap:6px">' + (o.actif ? '' : '<span class="badge warn">Désactivé</span>') + '<span class="badge ' + (o.role === 'admin' ? '' : 'grey') + '">' + (o.role === 'admin' ? 'Admin' : 'Opérateur') + '</span>' +
           '<span class="badge ' + (o.hasPassword ? '' : 'warn') + '">' + (o.hasPassword ? 'Peut se connecter' : 'Mot de passe à définir') + '</span>' +
           '<span class="badge ' + (o.attestation ? '' : 'warn') + '">' + (o.attestation ? 'Attestation ' + esc(o.attestation) : 'Attestation à renseigner') + '</span></span></button>';
       }).join('') + '<div class="note">Les opérateurs ne peuvent pas créer de compte. Tu crées chaque compte avec son e-mail et son mot de passe, puis tu le lui transmets.</div>';
@@ -341,6 +341,7 @@ var V = {
   opForm: function () {
     var f = S.opForm;
     return msgBox() + '<div class="sec">Connexion</div><div class="card">' + field('Adresse e-mail (identifiant)', 'opForm.email', { type: 'email' }) +
+      field('E-mail secondaire (facultatif)', 'opForm.email2', { type: 'email', ph: 'Pour se connecter aussi avec une autre adresse' }) +
       '<label for="pw">' + (f.id ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe') + '</label>' +
       '<div style="display:flex;gap:8px"><input id="pw" type="text" data-bind="opForm.password" value="' + esc(f.password) + '"><button type="button" class="chip" data-act="genPwd">Générer</button></div>' +
       '<div class="note">Rôle</div>' + chips([['operateur', 'Opérateur'], ['admin', 'Admin']], f.role, 'setRole') + '</div>' +

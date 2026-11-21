@@ -157,6 +157,12 @@ function checkPassword_(email, password) {
   return hash_(password, rec['Sel']) === rec['Empreinte'];
 }
 
+function renamePassword_(oldEmail, newEmail) {
+  var c = comptes_();
+  var rec = c.rows.filter(function (r) { return String(r['E-mail']).toLowerCase() === oldEmail; })[0];
+  if (rec) writeRow_(c, { 'E-mail': newEmail, 'Mis à jour': new Date() }, rec._row);
+}
+
 function hasPassword_(email) {
   var key = String(email || '').trim().toLowerCase();
   return !!key && comptes_().rows.some(function (r) { return String(r['E-mail']).toLowerCase() === key; });
@@ -164,7 +170,7 @@ function hasPassword_(email) {
 
 function operatorPublic_(o) {
   return {
-    id: o['ID'], prenom: o['Prénom'] || '', nom: o['Nom'] || '', email: o['E-mail (identifiant)'] || '',
+    id: o['ID'], prenom: o['Prénom'] || '', nom: o['Nom'] || '', email: o['E-mail (identifiant)'] || '', email2: o['E-mail secondaire'] || '',
     role: String(o['Rôle'] || '').toLowerCase() === 'admin' ? 'admin' : 'operateur',
     attestation: o['N° attestation d’aptitude'] ? String(o['N° attestation d’aptitude']) : '',
     attestationChargee: String(o['Attestation chargée'] || '').toLowerCase().indexOf('oui') === 0,
@@ -244,8 +250,11 @@ function setup_(d) {
 function login_(d) {
   var email = String(d.email || '').trim().toLowerCase();
   Utilities.sleep(300); // ralentit les essais en rafale
-  var op = readTable_(SH.ops).rows.map(operatorPublic_).filter(function (o) { return o.email.toLowerCase() === email; })[0];
-  if (!op || !checkPassword_(email, d.password || '')) throw new Error('E-mail ou mot de passe incorrect.');
+  // on accepte l'e-mail principal ou l'e-mail secondaire ; le mot de passe est rattaché à l'e-mail principal
+  var op = readTable_(SH.ops).rows.map(operatorPublic_).filter(function (o) {
+    return email && (o.email.toLowerCase() === email || String(o.email2).toLowerCase() === email);
+  })[0];
+  if (!op || !checkPassword_(op.email, d.password || '')) throw new Error('E-mail ou mot de passe incorrect.');
   if (!op.actif) throw new Error('Ce compte est désactivé. Contacte l’administrateur.');
   var token = Utilities.getUuid() + Utilities.getUuid().slice(0, 8);
   CacheService.getScriptCache().put('s_' + token, JSON.stringify({ id: op.id, email: op.email }), APP.sessionSeconds);
@@ -279,24 +288,32 @@ function listOperateurs_() {
 }
 
 function saveOperateur_(d, user) {
+  ensureColumn_(SH.ops, 'E-mail secondaire');
   var t = readTable_(SH.ops);
   var email = String(d.email || '').trim().toLowerCase();
+  var email2 = String(d.email2 || '').trim().toLowerCase();
   if (!email || email.indexOf('@') < 1) throw new Error('Adresse e-mail invalide.');
-  var clash = t.rows.filter(function (r) { return String(r['E-mail (identifiant)']).toLowerCase() === email && r['ID'] !== d.id; })[0];
-  if (clash) throw new Error('Cette adresse e-mail est déjà utilisée par un autre compte.');
+  if (email2 && email2.indexOf('@') < 1) throw new Error('Adresse e-mail secondaire invalide.');
+  if (email2 && email2 === email) throw new Error('L’e-mail secondaire doit être différent de l’e-mail principal.');
+  var taken = function (addr) {
+    return addr && t.rows.some(function (r) {
+      return r['ID'] !== d.id && [r['E-mail (identifiant)'], r['E-mail secondaire']].some(function (x) { return String(x || '').toLowerCase() === addr; });
+    });
+  };
+  if (taken(email) || taken(email2)) throw new Error('Cette adresse e-mail est déjà utilisée par un autre compte.');
   var row = d.id ? t.rows.filter(function (r) { return r['ID'] === d.id; })[0] : null;
   if (row && row['ID'] === user.id && d.role !== 'admin') throw new Error('Tu ne peux pas retirer ton propre rôle admin.');
   var oldEmail = row ? String(row['E-mail (identifiant)'] || '').toLowerCase() : '';
   if (!row && !d.password) throw new Error('Définis un mot de passe pour ce nouveau compte.');
-  if (row && !d.password && oldEmail !== email && hasPassword_(oldEmail)) throw new Error('E-mail modifié : définis aussi un nouveau mot de passe pour ce compte.');
   if (d.password && String(d.password).length < 8) throw new Error('Le mot de passe doit faire au moins 8 caractères.');
   var rec = {
-    'Prénom': d.prenom || '', 'Nom': d.nom || '', 'E-mail (identifiant)': email,
+    'Prénom': d.prenom || '', 'Nom': d.nom || '', 'E-mail (identifiant)': email, 'E-mail secondaire': email2,
     'Rôle': d.role === 'admin' ? 'admin' : 'opérateur', 'N° attestation d’aptitude': d.attestation || ''
   };
   if (!row) rec['ID'] = nextId_(t.rows, 'OP', 'ID');
   writeRow_(t, rec, row ? row._row : null);
   if (d.password) setPassword_(email, d.password);
+  else if (row && oldEmail && oldEmail !== email) renamePassword_(oldEmail, email); // garde le mot de passe si l'e-mail principal change
   return listOperateurs_();
 }
 
