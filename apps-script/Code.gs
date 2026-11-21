@@ -452,6 +452,9 @@ function chantierFromRow_(r, gwps) {
   o.creePar = String(r['Créé par'] || '');
   o.client = (o.prenom ? o.prenom + ' ' : '') + o.nom;
   o.misEnService = !!o.dateMes;
+  // Année du chantier : année de mise en service, sinon année de création, sinon année en cours (chantier à mettre en service)
+  var an = function (v) { var m = String(v || '').match(/(\d{4})/); return m ? m[1] : ''; };
+  o.annee = an(o.dateMes) || an(r['Créé le']) || String(new Date().getFullYear());
   return o;
 }
 
@@ -473,6 +476,7 @@ function saveChantier_(d, user) {
   try {
     ensureColumn_(SH.chantiers, 'Charge usine (kg)');
     ensureColumn_(SH.chantiers, 'Créé par');
+    ensureColumn_(SH.chantiers, 'Créé le');
     var t = readTable_(SH.chantiers);
     var row = d.id ? t.rows.filter(function (r) { return r['ID'] === d.id; })[0] : null;
     if (d.id && !row) throw new Error('Chantier introuvable.');
@@ -482,6 +486,7 @@ function saveChantier_(d, user) {
     if (!row) {
       rec['ID'] = nextId_(t.rows.concat(corbeille_().rows), 'C', 'ID');   // jamais réutiliser l'ID d'un chantier supprimé
       if (user) rec['Créé par'] = user.id;
+      rec['Créé le'] = new Date();
     }
     var r = writeRow_(t, rec, row ? row._row : null);
     // GWP : valeur saisie à la main si fournie, sinon valeur de l'onglet Fluides (écrite en nombre, sans formule)
