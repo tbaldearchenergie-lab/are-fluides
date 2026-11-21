@@ -476,6 +476,7 @@ function saveChantier_(d, user) {
     var t = readTable_(SH.chantiers);
     var row = d.id ? t.rows.filter(function (r) { return r['ID'] === d.id; })[0] : null;
     if (d.id && !row) throw new Error('Chantier introuvable.');
+    if (row && user && user.role !== 'admin' && String(row['Créé par'] || '') !== user.id) throw new Error('Tu ne peux modifier que les chantiers que tu as créés.');
     var rec = {};
     Object.keys(CH_FIELDS).forEach(function (k) { if (k !== 'id' && d[k] !== undefined) rec[CH_FIELDS[k]] = d[k]; });
     if (!row) {
@@ -769,12 +770,13 @@ function parseFr_(s) {
 }
 function today_() { return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy'); }
 
-/** Droits sur une mise en service : admin, créateur du chantier ou opérateur qui l'a faite. */
+/** Droits de modification (fiche chantier, mise en service, rapport) : l'administrateur, ou l'opérateur qui a créé le chantier.
+ *  Sur le chantier d'un autre, un opérateur peut consulter, ajouter des manipulations et compléter les n° de série absents. */
 function canEditMes_(c, mesRow, user) {
   if (user.role === 'admin') return true;
-  if (c && c.creePar === user.id) return true;
-  return !!(mesRow && String(mesRow['Opérateur ID']) === user.id);
+  return !!(c && c.creePar && c.creePar === user.id);
 }
+var DROITS_MSG = 'Seul l’opérateur qui a créé ce chantier ou un administrateur peut faire cette modification.';
 
 /* ---------- Outillage, bouteilles, distributeurs */
 
@@ -1013,7 +1015,7 @@ function saveManip_(d, user) {
     var mesSh = ensureSheet_(MES.sheet, MES.headers);
     var mt = readTable_(MES.sheet);
     var row = mt.rows.filter(function (r) { return String(r['ID chantier']) === c.id; })[0] || null;
-    if (row && !canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la compléter.');
+    var editeur = canEditMes_(c, row, user);
     if (row && d.op === 'mes') throw new Error('La mise en service est déjà enregistrée : choisis une manipulation de fluide.');
 
     var fl = fluideInfo_(c.fluide), gwp = fl ? fl.gwp : num_(c.gwp);
@@ -1034,8 +1036,12 @@ function saveManip_(d, user) {
       if (!detecteur) throw new Error('Choisis le détecteur de fuite utilisé.');
       if (!detecteur.ok) throw new Error('Le contrôle de ce détecteur est dépassé : il ne peut pas être utilisé.');
     }
-    var distributeur = d.op === 'recup' ? (distributeurs_().filter(function (x) { return x.id === d.distributeur; })[0] || null) : null;
-    if (d.op === 'recup' && !distributeur) throw new Error('Choisis la destination du fluide récupéré (case 13).');
+    // Case 13 : site de reprise du distributeur rattaché à la bouteille (renseigné par l'administrateur, pas par l'opérateur)
+    var distributeur = null;
+    if (d.op === 'recup') {
+      var bo = bouteilles_().filter(function (b) { return b.ref === d.bouteille; })[0];
+      distributeur = bo && bo.distributeur ? (distributeurs_().filter(function (x) { return x.id === bo.distributeur; })[0] || null) : null;
+    }
 
     var now = new Date(), opNom = (user.prenom + ' ' + user.nom).trim() || user.email;
     // En-tête de la mise en service (créé à la première opération)
@@ -1047,8 +1053,8 @@ function saveManip_(d, user) {
       row = mt.rows.filter(function (r) { return String(r['ID chantier']) === c.id; })[0];
     } else {
       var up = { 'Modifiée le': now };
-      if (d.serieUE) up['N° série UE'] = d.serieUE;
-      if (d.serieUI) up['N° série UI'] = d.serieUI;
+      if (d.serieUE && (editeur || !String(row['N° série UE'] || '').trim())) up['N° série UE'] = d.serieUE;
+      if (d.serieUI && (editeur || !String(row['N° série UI'] || '').trim())) up['N° série UI'] = d.serieUI;
       writeRow_(mt, up, row._row);
     }
     // Photos et signature
@@ -1064,8 +1070,8 @@ function saveManip_(d, user) {
     var ct = readTable_(SH.chantiers), crow = ct.rows.filter(function (r) { return r['ID'] === c.id; })[0];
     var cup = {};
     if (!c.dateMes) cup['Date MES'] = date;
-    if (d.serieUE) cup['N° série UE'] = d.serieUE;
-    if (d.serieUI) cup['N° série UI'] = d.serieUI;
+    if (d.serieUE && (editeur || !c.serieUE)) cup['N° série UE'] = d.serieUE;
+    if (d.serieUI && (editeur || !c.serieUI)) cup['N° série UI'] = d.serieUI;
     if (isFinite(chargeUsine) && !c.chargeUsine) cup['Charge usine (kg)'] = chargeUsine;
     if (Object.keys(cup).length) writeRow_(ct, cup, crow._row);
 
@@ -1133,7 +1139,7 @@ function saveCerfa_(d, user) {
   var f = findMouv_(d.cerfa);
   var c = getChantier_(String(f.row['ID chantier']));
   var mesRow = mesRows_(c.id)[0];
-  if (String(f.row['Opérateur ID']) !== user.id && !canEditMes_(c, mesRow, user)) throw new Error('Tu ne peux pas modifier cette fiche.');
+  // Tout opérateur peut régénérer un CERFA : son contenu vient des données enregistrées (cerfaData), pas de la saisie
   if (!d.pdf) throw new Error('PDF manquant.');
   var m = {}; try { m = JSON.parse(f.row['Données'] || '{}'); } catch (e) { m = {}; }
   trashFile_(String(f.row['CERFA (ID)'] || ''));
@@ -1147,7 +1153,6 @@ function cerfaData_(d, user) {
   var f = findMouv_(d.cerfa);
   var c = getChantier_(String(f.row['ID chantier']));
   var mesRow = mesRows_(c.id)[0];
-  if (!canEditMes_(c, mesRow, user)) throw new Error('Tu ne peux pas modifier cette fiche.');
   var m = {}; try { m = JSON.parse(f.row['Données'] || '{}'); } catch (e) { m = {}; }
   var sig = '';
   if (mesRow && mesRow['Signature (ID)']) { try { sig = Utilities.base64Encode(DriveApp.getFileById(String(mesRow['Signature (ID)'])).getBlob().getBytes()); } catch (e) { sig = ''; } }
@@ -1160,7 +1165,9 @@ function buildReport_(d, user) {
   var c = getChantier_(d.chantierId);
   var row = mesRows_(c.id)[0];
   if (!row) throw new Error('Aucune mise en service sur ce chantier.');
-  if (!canEditMes_(c, row, user) && String(row['Opérateur ID']) !== user.id) throw new Error('Tu ne peux pas modifier ce rapport.');
+  // Le rapport est construit à partir des données enregistrées. Un opérateur qui n'a pas créé le chantier
+  // (ajout de n° de série absent) peut le refaire s'il existe, mais pas le créer.
+  if (!canEditMes_(c, row, user) && !String(row['Rapport (ID)'] || row['Rapport (lien)'] || '')) return { skipped: true };
   var p = params_(), tz = Session.getScriptTimeZone();
   var manips = mouvTable_().rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); });
   var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
@@ -1204,7 +1211,7 @@ function updateReport_(d, user) {
   var c = getChantier_(d.chantierId);
   var row = mesRows_(c.id)[0];
   if (!row) throw new Error('Aucune mise en service sur ce chantier.');
-  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut modifier le rapport.');
+  if (!canEditMes_(c, row, user)) throw new Error(DROITS_MSG);
   var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
   var remove = d.removePhotos || [];
   photos = photos.filter(function (ph) { if (remove.indexOf(ph.id) >= 0) { trashFile_(ph.id); return false; } return true; });
@@ -1218,7 +1225,7 @@ function deleteReport_(d, user) {
   var c = getChantier_(d.chantierId);
   var row = mesRows_(c.id)[0];
   if (!row) throw new Error('Aucune mise en service sur ce chantier.');
-  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut supprimer le rapport.');
+  if (!canEditMes_(c, row, user)) throw new Error(DROITS_MSG);
   trashFile_(String(row['Rapport (ID)'] || ''));
   writeRow_(readTable_(MES.sheet), { 'Rapport (lien)': '', 'Rapport (ID)': '', 'Modifiée le': new Date() }, row._row);
   return true;
@@ -1230,7 +1237,14 @@ function updateMes_(d, user) {
   var c = getChantier_(d.chantierId);
   var row = mesRows_(c.id)[0];
   if (!row) throw new Error('Aucune mise en service sur ce chantier.');
-  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la modifier.');
+  if (!canEditMes_(c, row, user)) {
+    // Compléter seulement les n° de série absents
+    var ue0 = String(row['N° série UE'] || '').trim(), ui0 = String(row['N° série UI'] || '').trim();
+    var ue = String(d.serieUE || '').trim(), ui = String(d.serieUI || '').trim();
+    if ((ue0 && ue !== ue0) || (ui0 && ui !== ui0) || (d.date && String(d.date).trim() !== String(row['Date']))) throw new Error(DROITS_MSG + ' Tu peux seulement compléter les n° de série absents.');
+    if (ue === ue0 && ui === ui0) return { cerfas: [] };
+    d = { chantierId: c.id, date: String(row['Date']), serieUE: ue, serieUI: ui };
+  }
   var date = String(d.date || '').trim();
   if (!parseFr_(date)) throw new Error('Date au format jj/mm/aaaa.');
   if (parseFr_(date) > new Date()) throw new Error('La date ne peut pas être dans le futur.');
@@ -1276,7 +1290,7 @@ function deleteManip_(d, user) {
   var f = findMouv_(d.cerfa);
   var c = getChantier_(String(f.row['ID chantier']));
   var row = mesRows_(c.id)[0];
-  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la modifier.');
+  if (!canEditMes_(c, row, user)) throw new Error(DROITS_MSG);
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try { deleteManipRow_(f.t, f.row, user); } finally { lock.releaseLock(); }
   return true;
@@ -1286,13 +1300,16 @@ function deleteMes_(d, user) {
   var c = getChantier_(d.chantierId);
   var row = mesRows_(c.id)[0];
   if (!row) throw new Error('Aucune mise en service sur ce chantier.');
-  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la supprimer.');
+  if (!canEditMes_(c, row, user)) throw new Error(DROITS_MSG);
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     // Les opérations d'abord, de bas en haut pour garder les numéros de ligne
     var mv = mouvTable_();
     mv.rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); }).reverse().forEach(function (r) { deleteManipRow_(mv, r, user); });
     trashFile_(String(row['Rapport (ID)'] || ''));
+    trashFile_(String(row['Signature (ID)'] || ''));
+    var phs = []; try { phs = JSON.parse(row['Photos'] || '[]'); } catch (e) { phs = []; }
+    phs.forEach(function (ph) { trashFile_(ph.id); });
     var mt = readTable_(MES.sheet);
     archiveRow_(MES.trashMes, mt, mt.rows.filter(function (r) { return String(r['ID']) === String(row['ID']); })[0], user);
     mt.sh.deleteRow(row._row);

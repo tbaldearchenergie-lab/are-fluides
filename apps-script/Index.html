@@ -52,6 +52,7 @@
   .msg{padding:12px 14px;border-radius:12px;font-size:14px;font-weight:600;line-height:1.4}
   .msg.err{background:var(--warn-bg);color:var(--warn)}
   .msg.ok{background:var(--mint);color:var(--green-dark)}
+  .msg.info{background:#E3EEF9;color:#1D4F7A}
   .admincard{text-align:left;border:0;border-radius:16px;background:var(--ink);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px;cursor:pointer;width:100%}
   .admincard small{display:block;font-size:13px;color:#A9C9B6;margin-top:2px}
   nav{position:fixed;left:0;right:0;bottom:0;z-index:5;background:#fff;border-top:1px solid #E0E5E1;padding:10px 16px calc(14px + env(safe-area-inset-bottom))}
@@ -97,7 +98,7 @@
 var S = {
   token: null, user: null, screen: 'loading', stack: [], status: null, msg: null, loaded: false,
   chantiers: [], search: '', page: 0, cur: null, form: null, fluides: [], machines: [],
-  ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '', confirm: '' }, busy: false, showPw: {}, share: null, mine: load('are_mine') === '1'
+  ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '', confirm: '' }, busy: false, showPw: {}, share: null, mine: /^[12]$/.test(load('are_mine') || '') ? load('are_mine') : ''
 };
 var TYPES = ['PAC AE', 'PAC AA Monosplit', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
 var MAIN_FLUIDS = ['R32', 'R410A', 'R454C'];
@@ -355,7 +356,7 @@ var A = {
   },
   setRole: function (v) { S.opForm.role = v; render(); },
   togglePw: function (p) { S.showPw[p] = !S.showPw[p]; render(); var el = document.querySelector('[data-bind="' + p + '"]'); if (el) el.focus(); },
-  setMine: function (v) { S.mine = v === '1'; store('are_mine', S.mine ? '1' : null); S.page = 0; render(); },
+  setMine: function (v) { S.mine = v === '0' ? '' : v; store('are_mine', S.mine || null); S.page = 0; render(); },
   closeShare: function () { S.share = null; render(); },
   copyShare: function () {
     var t = shareText(S.share), done = function () { S.msg = { text: 'Identifiants copiés : colle-les dans un e-mail, un SMS ou WhatsApp.' }; render(); };
@@ -430,8 +431,10 @@ var V = {
   home: function () {
     var q = S.search.trim().toLowerCase();
     var mineCount = S.chantiers.filter(function (c) { return c.creePar === S.user.id; }).length;
+    var todoCount = S.chantiers.filter(function (c) { return c.creePar === S.user.id && !c.misEnService; }).length;
     var list = S.chantiers.filter(function (c) {
       if (S.mine && c.creePar !== S.user.id) return false;
+      if (S.mine === '2' && c.misEnService) return false;
       return !q || [c.client, c.adresse, c.ville, c.cp, c.projet, c.marque, c.modele].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     var pages = Math.max(1, Math.ceil(list.length / PAGE));
@@ -440,10 +443,11 @@ var V = {
     var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox();
     h += '<button class="btn" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Chantiers (' + S.chantiers.length + ')</div>';
-    h += chips([['0', 'Tous (' + S.chantiers.length + ')'], ['1', 'Mes chantiers (' + mineCount + ')']], S.mine ? '1' : '0', 'setMine');
+    h += chips([['0', 'Tous (' + S.chantiers.length + ')'], ['1', 'Mes chantiers (' + mineCount + ')'], ['2', 'Mes chantiers à mettre en service (' + todoCount + ')']], S.mine || '0', 'setMine');
     h += '<div class="search">' + ICON.search + '<input type="search" aria-label="Rechercher un chantier" placeholder="Client, ville, n° projet, machine…" data-bind="search" data-live="1" value="' + esc(S.search) + '"></div>';
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
     else if (S.mine && !mineCount) h += '<div class="note center">Tu n’as encore créé aucun chantier. Les chantiers que tu crées apparaîtront ici.</div>';
+    else if (S.mine === '2' && !todoCount) h += '<div class="note center">Tous tes chantiers sont mis en service.</div>';
     else if (!S.chantiers.length) h += '<div class="note center">Aucun chantier pour l’instant. Crée le premier avec « Nouveau chantier ».</div>';
     else if (!list.length) h += '<div class="note center">Aucun chantier ne correspond à « ' + esc(S.search) + ' ».</div>';
     var pager = pages > 1 ?
@@ -474,7 +478,7 @@ var V = {
       (c.projet ? '<div class="note">Projet ' + esc(c.projet) + '</div>' : '') + '</div>' +
       '<div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + esc(r[1] || '—') + '</span></div>'; }).join('') + '</div>' +
       (c.commentaires ? '<div class="card"><div class="note">' + esc(c.commentaires) + '</div></div>' : '') +
-      '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' +
+      (ownsChantier(c) ? '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' : '') +
       viewChantierMes(c) + deleteBlock(c);
   },
 
@@ -582,7 +586,7 @@ function shareBox() {
 }
 function canDeleteChantier(c) { return ownsChantier(c) && !c.misEnService; }
 function deleteBlock(c) {
-  if (!ownsChantier(c)) return '<div class="note" style="text-align:center">Seul l’opérateur qui a créé ce chantier ou un administrateur peut le supprimer.</div>';
+  if (!ownsChantier(c)) return c.misEnService ? '' : '<div class="note" style="text-align:center">Seul l’opérateur qui a créé ce chantier ou un administrateur peut le supprimer.</div>';
   if (c.misEnService) return '<div class="note" style="text-align:center">Ce chantier ne peut pas être supprimé car une mise en service a déjà été réalisée. Pour le supprimer, il faut d’abord supprimer la mise en service.</div>';
   return S.confirmDelete
     ? '<div class="msg err">Supprimer la fiche chantier de ' + esc(c.client) + ' ? Elle disparaît de la liste (une copie est gardée dans le tableur).</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteChantier">Oui, supprimer</button></div>'
@@ -709,7 +713,7 @@ function bottlesFor(op) {
   var fl = normModele(S.ctx.chantier.fluide);
   return S.ctx.bouteilles.filter(function (b) {
     if (!/d[ée]p[ôo]t/i.test(b.statut)) return false;
-    if (op === 'ajout') return /neuve/i.test(b.type) && (!b.fluide || normModele(b.fluide) === fl);
+    if (op === 'ajout') return /neuve|transfert/i.test(b.type) && (!b.fluide || normModele(b.fluide) === fl);
     return /r[ée]cup|transfert/i.test(b.type) && (!b.fluide || normModele(b.fluide) === fl);
   });
 }
@@ -739,7 +743,6 @@ function mesCheckStep(key) {
       if (!d.bouteille) return 'Choisis la bouteille utilisée.';
       if (!isFinite(numOrNaN(d.poidsAvant)) || !isFinite(numOrNaN(d.poidsApres))) return 'Saisis les deux pesées.';
       if (!(mesQuantite() > 0)) return d.op === 'ajout' ? 'La bouteille doit être plus légère après la charge.' : 'La bouteille doit être plus lourde après la récupération.';
-      if (d.op === 'recup' && !d.distributeur) return 'Choisis la destination du fluide récupéré (case 13).';
     }
   }
   if (key === 'etanch') {
@@ -763,7 +766,7 @@ function mesEcartHtml() {
   var q = mesQuantite(), comp = complement();
   if (S.mes.d.op !== 'ajout' || !isFinite(q) || !isFinite(comp) || !(comp > 0)) return '';
   var ecart = Math.round((q - comp) * 1000);
-  return '<div class="msg ' + (Math.abs(ecart) <= Math.max(30, comp * 100) ? 'ok' : 'err') + '">' + (ecart === 0 ? 'Exactement le complément calculé.' : 'Écart de ' + (ecart > 0 ? '+' : '') + ecart + ' g avec le complément calculé.') + '</div>';
+  return '<div class="msg ' + (Math.abs(ecart) <= Math.max(30, comp * 100) ? 'ok' : 'info') + '">' + (ecart === 0 ? 'Exactement le complément calculé.' : 'Écart de ' + (ecart > 0 ? '+' : '') + ecart + ' g avec le complément calculé (indicatif : la charge réelle dépend du chantier).') + '</div>';
 }
 function updateLive(p) {
   var set = function (id, html) { var el = document.getElementById(id); if (el) el.innerHTML = html; };
@@ -799,9 +802,9 @@ function viewChantierMes(c) {
     if (mes.peutModifier) h += '<button class="btn out" data-act="editReport">Créer le rapport d’installation</button>';
   }
   h += '</div>';
+  h += '<button class="btn" data-act="addManip">Ajouter une manipulation</button>';
   if (mes.peutModifier) {
     var missing = mes.manips.filter(function (x) { return !x.lien; }).length;
-    h += '<button class="btn" data-act="addManip">Ajouter une manipulation</button>';
     if (missing) h += '<button class="btn out" data-act="remakeDocs">Refaire les documents (CERFA et rapport)</button>';
     if (S.editMes) {
       h += '<div class="card"><b>Modifier la mise en service</b>' +
@@ -813,7 +816,16 @@ function viewChantierMes(c) {
     h += S.confirmMes
       ? '<div class="msg err">Supprimer la mise en service et ses ' + mes.manips.length + ' fiche(s) CERFA ? Les lignes sont retirées du registre (une copie est gardée dans le tableur) et les pesées des bouteilles sont remises.</div><div class="g2"><button class="btn out" data-act="cancelDeleteMes">Annuler</button><button class="btn danger" data-act="deleteMes">Oui, supprimer</button></div>'
       : '<button class="btn danger" data-act="askDeleteMes">Supprimer la mise en service</button>';
-  } else h += '<div class="note" style="text-align:center">Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut la modifier.</div>';
+  } else {
+    if (!mes.serieUE || !mes.serieUI) {
+      if (S.editMes) {
+        h += '<div class="card"><b>Compléter les n° de série</b>' +
+          (!mes.serieUE ? field('N° de série UE', 'editMes.serieUE') : '') + (!mes.serieUI ? field('N° de série UI', 'editMes.serieUI') : '') +
+          '<div class="g2"><button class="btn out" data-act="cancelEditMes">Annuler</button><button class="btn" data-act="saveEditMes">Enregistrer</button></div></div>';
+      } else h += '<button class="btn out" data-act="editMes">Compléter les n° de série</button>';
+    }
+    h += '<div class="note" style="text-align:center">Tu peux consulter ce chantier et y ajouter des manipulations. Seul l’opérateur qui a créé le chantier ou un administrateur peut modifier ou supprimer la mise en service et le rapport.</div>';
+  }
   return h;
 }
 
@@ -886,22 +898,20 @@ V.mes = function () {
         '<div class="card">' + (c.chargeUsine ? '<div class="rows" style="padding:0 4px"><div class="row"><span>Charge usine (fiche chantier)</span><span>' + esc(c.chargeUsine) + ' kg</span></div></div>' : field('Charge usine de l’unité extérieure (kg) *', 'mes.d.chargeUsine', { mode: 'decimal', ph: 'Absente de la fiche chantier' })) +
         '<div class="rows" style="padding:0 4px"><div class="row"><span>Liaisons / précharge</span><span>' + esc((c.longueur || '?') + ' m / ' + (c.precharge || '?') + ' m') + '</span></div>' +
         '<div class="row"><span>Équivalent CO₂' + (isFinite(gwp) ? ' (GWP ' + esc(String(gwp).replace('.', ',')) + ')' : '') + '</span><span id="mesTeq">' + mesTeqTxt() + '</span></div></div>' +
-        (comp > 0 ? '<div class="msg err">Les liaisons dépassent la précharge : il faudra environ ' + frNum(comp) + ' kg en plus. Ajoute ensuite une manipulation « Ajout de charge ».</div>' : '') + '</div>';
+        (comp > 0 ? '<div class="msg info">Les liaisons dépassent la précharge : il faudra environ ' + frNum(comp) + ' kg en plus. Ajoute ensuite une manipulation « Ajout de charge ».</div>' : '') + '</div>';
     } else {
       var bl = bottlesFor(d.op), cur = S.ctx.bouteilles.filter(function (b) { return b.ref === d.bouteille; })[0];
       if (d.op === 'ajout') h += '<div class="rows"><div class="row"><span>Complément calculé (' + esc((c.longueur || '?') + ' m − ' + (c.precharge || '?') + ' m × ' + (c.gpm || '?') + ' g/m') + ')</span><span>' + (isFinite(comp) ? frNum(comp) + ' kg' : '—') + '</span></div></div>';
-      h += '<div class="card"><label>' + (d.op === 'ajout' ? 'Bouteille de fluide neuf' : 'Bouteille de récupération') + '<select data-bind="mes.d.bouteille" data-rerender="1"><option value="">Choisir la bouteille…</option>' +
+      h += '<div class="card"><label>' + (d.op === 'ajout' ? 'Bouteille de fluide neuf ou de transfert' : 'Bouteille de récupération ou de transfert') + '<select data-bind="mes.d.bouteille" data-rerender="1"><option value="">Choisir la bouteille…</option>' +
         bl.map(function (b) { return '<option value="' + esc(b.ref) + '"' + (b.ref === d.bouteille ? ' selected' : '') + '>' + esc(b.ref + (b.fluide ? ' · ' + b.fluide : '') + (b.reste ? ' · reste ' + b.reste + ' kg' : '')) + '</option>'; }).join('') + '</select></label>' +
-        (!bl.length ? '<div class="msg err">Aucune bouteille ' + (d.op === 'ajout' ? 'neuve de ' + esc(c.fluide || 'ce fluide') : 'de récupération') + ' au dépôt dans l’onglet Bouteilles.</div>' : '') +
+        (!bl.length ? '<div class="msg err">Aucune bouteille ' + (d.op === 'ajout' ? 'neuve ou de transfert de ' + esc(c.fluide || 'ce fluide') : 'de récupération ou de transfert') + ' au dépôt dans l’onglet Bouteilles.</div>' : '') +
         (cur && cur.pesee ? '<div class="note">Dernière pesée enregistrée : ' + esc(cur.pesee) + ' kg.</div>' : '') +
         '<div class="g2">' + field('Pesée avant (kg)', 'mes.d.poidsAvant', { mode: 'decimal' }) + field('Pesée après (kg)', 'mes.d.poidsApres', { mode: 'decimal' }) + '</div>' +
         '<div class="rows" style="padding:0 4px"><div class="row"><span>Quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + '</span><span id="mesQte">' + mesQteTxt() + '</span></div></div>' +
         '<div id="mesEcart">' + mesEcartHtml() + '</div></div>';
       if (d.op === 'recup') {
         var inflam = ctx.fluide ? ctx.fluide.inflammable : String(c.inflam).toLowerCase() === 'oui';
-        h += '<div class="rows"><div class="row"><span>[12] Rubrique déchets (automatique)</span><span>' + (inflam ? '16 05 04* · UN 3161' : '14 06 01* · UN 1078') + '</span></div></div>' +
-          '<div class="card"><label>[13] Destination prévue du fluide récupéré<select data-bind="mes.d.distributeur"><option value="">Choisir…</option>' +
-          ctx.distributeurs.map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === d.distributeur ? ' selected' : '') + '>' + esc(x.nom + (x.siret ? ' · SIRET ' + x.siret : '')) + '</option>'; }).join('') + '</select></label></div>';
+        h += '<div class="rows"><div class="row"><span>[12] Rubrique déchets (automatique)</span><span>' + (inflam ? '16 05 04* · UN 3161' : '14 06 01* · UN 1078') + '</span></div></div>';
       }
     }
   }
@@ -929,9 +939,9 @@ V.mes = function () {
   }
 
   var last = m.step === steps.length - 1;
-  h += '<div class="g2" style="margin-top:4px">' + (m.step > 0 ? '<button class="btn out" data-act="mesPrev">Retour</button>' : '<span></span>') +
+  h += '<div class="g2" style="margin-top:4px">' + '<button class="btn out" data-act="mesPrev">Retour</button>' +
     '<button class="btn" data-act="' + (last ? 'mesValidate' : 'mesNext') + '">' + (last ? (m.add ? 'Valider la manipulation' : 'Valider la mise en service') : 'Continuer') + '</button></div>' +
-    '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden"><input type="file" id="plateInput" accept="image/*" capture="environment" class="hidden">';
+    '<input type="file" id="photoInput" accept="image/*" class="hidden"><input type="file" id="plateInput" accept="image/*" class="hidden">';
   return h;
 };
 
@@ -953,7 +963,7 @@ V.rapport = function () {
       '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Ajouter une photo</button></div>';
   });
   h += '<button class="btn" data-act="saveReport">' + (mes.rapport ? 'Enregistrer et refaire le rapport' : 'Créer le rapport') + '</button>' +
-    '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">';
+    '<input type="file" id="photoInput" accept="image/*" class="hidden">';
   return h;
 };
 
@@ -984,7 +994,7 @@ Object.assign(A, {
   setRep0: function (v) { S.mes.d.fuites[0].rep = v; render(); },
   setRep1: function (v) { S.mes.d.fuites[1].rep = v; render(); },
   setRep2: function (v) { S.mes.d.fuites[2].rep = v; render(); },
-  mesPrev: function () { if (S.mes.step > 0) S.mes.step--; S.msg = null; render(); window.scrollTo(0, 0); },
+  mesPrev: function () { S.msg = null; if (S.mes.step > 0) { S.mes.step--; render(); } else { S.mes = null; go('chantier'); } window.scrollTo(0, 0); },
   mesNext: function () {
     var steps = mesSteps(), err = mesCheckStep(steps[S.mes.step]);
     if (err) { S.msg = { err: true, text: err }; render(); window.scrollTo(0, 0); return; }
@@ -1091,7 +1101,7 @@ Object.assign(A, {
     var e = S.editMes;
     if (!e.date || e.date > todayIso()) { S.msg = { err: true, text: 'Date invalide ou dans le futur.' }; return render(); }
     S.editMes = null; S.progress = 'Enregistrement…'; render();
-    call('updateMes', { chantierId: S.cur.id, date: isoToFr(e.date), serieUE: e.serieUE, serieUI: e.serieUI })
+    call('updateMes', { chantierId: S.cur.id, date: S.ctx.mes.peutModifier ? isoToFr(e.date) : S.ctx.mes.date, serieUE: e.serieUE, serieUI: e.serieUI })
       .then(function (r) { return remakeDocs(r.cerfas); })
       .then(function () { S.msg = { text: 'Mise en service modifiée, documents refaits.' }; render(); })
       .catch(function (err) { S.progress = null; S.msg = { err: true, text: err.message }; render(); });
