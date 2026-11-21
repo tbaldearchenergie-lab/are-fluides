@@ -38,9 +38,11 @@
   .btn.ghost{background:transparent;color:var(--green);font-weight:600}
   .btn[disabled]{background:#D5DCD7;color:var(--muted);cursor:not-allowed}
   .chips{display:flex;flex-wrap:wrap;gap:8px}
-  .years{display:flex;align-items:center;gap:4px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px calc(50% - 60px);margin:0 -16px;scrollbar-width:none;-webkit-overflow-scrolling:touch;
+  .years{position:relative;cursor:grab;display:flex;align-items:center;gap:4px;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px calc(50% - 60px);margin:0 -16px;scrollbar-width:none;-webkit-overflow-scrolling:touch;
     -webkit-mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent);mask-image:linear-gradient(90deg,transparent,#000 22%,#000 78%,transparent)}
   .years::-webkit-scrollbar{display:none}
+  .years.drag{cursor:grabbing;scroll-snap-type:none}
+  .years.drag .yr{pointer-events:none}
   .yr{flex:0 0 120px;scroll-snap-align:center;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0;border:0;background:none;color:var(--muted);cursor:pointer;transition:color .2s}
   .yr .y{font-size:19px;font-weight:600;transition:font-size .2s}
   .yr .n{font-size:12px;opacity:0;transition:opacity .2s}
@@ -1246,7 +1248,32 @@ function initYears() {
       if (best && best.getAttribute('data-arg') !== S.annee) A.setAnnee(best.getAttribute('data-arg'));
     }, 160);
   }, { passive: true });
+  // Ordinateur : molette verticale = défilement horizontal, et glisser avec la souris
+  box.addEventListener('wheel', function (e) {
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); box.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: 'smooth' }); }
+  }, { passive: false });
+  box.addEventListener('mousedown', function (e) { if (e.button === 0) YDRAG = { box: box, x: e.clientX, left: box.scrollLeft, moved: false }; });
 }
+var YDRAG = null;
+window.addEventListener('mousemove', function (e) {
+    var drag = YDRAG, box = drag && drag.box;
+    if (!drag) return;
+    var dx = e.clientX - drag.x;
+    if (!drag.moved && Math.abs(dx) > 5) { drag.moved = true; box.classList.add('drag'); }
+    if (drag.moved) box.scrollLeft = drag.left - dx;
+  });
+window.addEventListener('mouseup', function () {
+    var drag = YDRAG, box = drag && drag.box;
+    if (!drag) return;
+    var moved = drag.moved; YDRAG = null;
+    if (moved) {
+      box.classList.remove('drag');
+      // Recaler sur l'année la plus proche du centre (le défilement déclenche la sélection)
+      var mid = box.scrollLeft + box.clientWidth / 2, best = null, d = 1e9;
+      Array.prototype.forEach.call(box.querySelectorAll('.yr'), function (b) { var x = Math.abs(b.offsetLeft + b.offsetWidth / 2 - mid); if (x < d) { d = x; best = b; } });
+      if (best) box.scrollTo({ left: best.offsetLeft + best.offsetWidth / 2 - box.clientWidth / 2, behavior: 'smooth' });
+    }
+});
 
 /* ============================== Événements ============================== */
 document.addEventListener('click', function (e) {
