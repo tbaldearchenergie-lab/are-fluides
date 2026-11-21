@@ -500,15 +500,19 @@ function listMachines_() {
   var dec = function (v) { return v === '' || v === null || v === undefined ? '' : String(v).replace('.', ','); };
   var mod = function (r) { return String(r['Modèle'] || r['Modèle UE'] || '').trim(); };
   // Une seule liste dans l'onglet : on ne propose que les unités extérieures et les monoblocs
-  var interieur = /^(Unité intérieure|Module hydraulique|Ballon)/i;
-  return readTable_(SH.machines).rows.filter(function (r) { return mod(r) && !interieur.test(String(r['Catégorie'] || '')); }).map(function (r) {
+  var interieur = /^(Unité intérieure|Module hydraulique|Ballon|Split|Gainable)/i;
+  return readTable_(SH.machines).rows.filter(function (r) {
+    if (!mod(r)) return false;
+    if (/^Aucune/i.test(String(r['Liaisons'] || ''))) return true;   // RAC Solo : appareil complet sans unité extérieure
+    return !interieur.test(String(r['Type d’appareil'] || '')) && !interieur.test(String(r['Catégorie'] || ''));
+  }).map(function (r) {
     return {
       marque: String(r['Marque'] || '').trim(), modele: mod(r), gamme: String(r['Gamme'] || ''),
       type: TYPES_INSTALL.indexOf(String(r['Type d’installation'])) >= 0 ? String(r['Type d’installation']) : '',
       liaison: String(r['Liaisons'] || ''), fluide: String(r['Fluide'] || '').toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R'),
       charge: dec(r['Charge usine (kg)']), precharge: dec(r['Longueur préchargée (m)']), gpm: dec(r['Charge supplémentaire (g/m)']),
-      phase: String(r['Alimentation'] || ''), kw: dec(r['Puissance chaud (kW)']), zones: dec(r['Zones max']),
-      remarque: String(r['Remarque'] || ''), categorie: String(r['Catégorie'] || ''), appareil: String(r['Type d’appareil'] || ''), usage: String(r['Usage'] || '')
+      phase: String(r['Alimentation'] || ''), lmax: dec(r['Longueur max UE-UI (m)']),
+      remarque: String(r['Remarque'] || ''), appareil: String(r['Type d’appareil'] || '')
     };
   });
 }
@@ -592,8 +596,8 @@ function extractReleve_(d) {
   var machines = [];
   try { machines = listMachines_(); } catch (e) { machines = []; }
   if (machines.length) {
-    prompt += '\n\nLISTE DES MACHINES (modèle | marque | appareil | usage | type d’installation | alimentation | puissance chaud kW | gamme) :\n' +
-      machines.map(function (m) { return [m.modele, m.marque, m.appareil, m.usage, m.type, m.phase, m.kw, m.gamme].join(' | '); }).join('\n');
+    prompt += '\n\nLISTE DES MACHINES (modèle | marque | gamme | type d’installation | alimentation | liaisons) :\n' +
+      machines.map(function (m) { return [m.modele, m.marque, m.gamme, m.type, m.phase, m.liaison].join(' | '); }).join('\n');
   }
   var text = callClaude_([block, { type: 'text', text: prompt }], 1800);
   var i = text.indexOf('{'), j = text.lastIndexOf('}');
@@ -643,15 +647,13 @@ function scoreMachines_(machines, info) {
     if (info.type) { if (m.type === info.type) sc += 4; else return null; }
     if (tri && m.phase === 'Triphasé') sc += 2; if (tri && m.phase === 'Monophasé') sc -= 3;
     if (mono && m.phase === 'Monophasé') sc += 1; if (mono && m.phase === 'Triphasé') sc -= 3;
-    if (info.ecs === 'oui' && /ECS/.test(m.usage) && !/selon/.test(m.usage)) sc += 1;
-    if (info.ecs === 'non' && /Chauffage seul/.test(m.usage)) sc += 1;
-    var p = Number(String(m.kw).replace(',', '.'));
+    var p = Number((String(m.modele).match(/(\d{2,3})/) || [])[1]) / 10;   // taille approximative d'après la référence (ex. RXM35 -> 3,5)
     if (kw && p) sc -= Math.abs(p - kw) / 2;
     return { m: m, sc: sc };
   }).filter(Boolean);
   if (!marque && !info.type && !kw) return [];
   scored.sort(function (a, b) { return b.sc - a.sc; });
-  return scored.map(function (x) { return { modele: x.m.modele, marque: x.m.marque, raison: 'Proposé d’après la marque, le type et la puissance' }; });
+  return scored.map(function (x) { return { modele: x.m.modele, marque: x.m.marque, raison: 'Proposé d’après la marque, le type et l’alimentation' }; });
 }
 
 /** À lancer une fois depuis l'éditeur (▶ Exécuter) : autorise les appels externes et vérifie la clé. */

@@ -234,7 +234,7 @@ function ueFields(f) {
   var groups = {}, order = [];
   var pourType = S.machines.filter(function (m) { return m.marque === bm && (!f.type || m.type === f.type); });
   if (!pourType.length) pourType = S.machines.filter(function (m) { return m.marque === bm; });
-  pourType.forEach(function (m) { var g = m.appareil || m.gamme || 'Autres'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(m); });
+  pourType.forEach(function (m) { var g = m.gamme || 'Autres'; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(m); });
   html += '<label>Modèle<select data-bind="form._modeleSel"><option value="">Choisir le modèle…</option>' +
     order.map(function (g) {
       return '<optgroup label="' + esc(g) + '">' + groups[g].map(function (m) { return '<option value="' + esc(m.modele) + '"' + (m.modele === mSel ? ' selected' : '') + '>' + esc(m.modele + (m.gamme ? ' – ' + m.gamme : '')) + '</option>'; }).join('') + '</optgroup>';
@@ -242,12 +242,18 @@ function ueFields(f) {
   if (mSel === 'Autre') html += field('Référence du modèle', 'form.modele', { ph: 'Référence de l’unité extérieure' });
   return html + machineHint(f);
 }
+function num(v) { var n = Number(String(v || '').replace(',', '.')); return isFinite(n) ? n : 0; }
+/** Alerte si la longueur saisie dépasse la longueur maximale du constructeur. */
+function longueurAlerte(f, m) {
+  if (!m || !m.lmax || !num(f.longueur) || num(f.longueur) <= num(m.lmax)) return '';
+  return '<div class="msg err" style="margin:0">Longueur de ' + esc(f.longueur) + ' m supérieure au maximum constructeur (' + esc(m.lmax) + ' m) pour ' + esc(m.modele) + '. Vérifie la longueur ou le modèle.</div>';
+}
 function machineHint(f) {
   var m = findMachine(f.modele);
   if (!m) return f.modele && S.machines.length ? '<div class="note">Modèle absent de la base machines : remplis la précharge et la charge à la main.</div>' : '';
   var bits = [m.fluide, m.charge ? 'charge usine ' + m.charge + ' kg' : '', m.precharge ? 'préchargé ' + m.precharge + ' m' : '', m.gpm ? m.gpm + ' g/m' : ''].filter(Boolean);
   var manque = [!m.precharge && /frigo/i.test(m.liaison) ? 'précharge' : '', !m.gpm && /frigo/i.test(m.liaison) ? 'g/m' : ''].filter(Boolean);
-  return '<div class="msg ok" style="margin:0"><b>' + esc(m.marque + ' ' + m.gamme) + '</b>' + (m.appareil ? '<br>' + esc([m.appareil, m.usage].filter(Boolean).join(' · ')) : '') + '<br>' + esc(bits.join(' · ')) +
+  return '<div class="msg ok" style="margin:0"><b>' + esc(m.marque + ' ' + m.gamme) + '</b>' + (m.liaison || m.phase ? '<br>' + esc([m.liaison ? 'Liaisons ' + m.liaison.toLowerCase() : '', m.phase].filter(Boolean).join(' · ')) : '') + '<br>' + esc(bits.join(' · ')) +
     (manque.length ? '<br>' + esc(manque.join(' et ')) + ' : voir la notice d’installation.' : '') +
     (m.remarque ? '<br><span style="font-size:13px">' + esc(m.remarque) + '</span>' : '') + '</div>';
 }
@@ -446,7 +452,8 @@ var V = {
       '<label>GWP du fluide<input type="text" inputmode="numeric" data-bind="form.gwpManuel" value="' + esc(f.gwpManuel) + '" placeholder="' + esc(info ? String(info.gwp) : 'À saisir') + '"><span style="font-size:13px">' + esc(gwpHint) + '</span></label>' +
       field('Charge usine (kg)', 'form.chargeUsine', { mode: 'decimal', ph: 'Inscrite sur la plaque' }) +
       '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques' + (hydro ? ' : aucune, machine à liaisons hydrauliques (monobloc)' : '') + '</div><div class="g3">' +
-      field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge suppl. (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
+      field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge suppl. (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div>' +
+      longueurAlerte(f, mSel) + '</div>' +
       '<div class="sec">Commentaires</div><div class="card">' +
       '<label>Commentaires<textarea rows="3" data-bind="form.commentaires">' + esc(f.commentaires) + '</textarea></label></div>' +
       '<button class="btn" data-act="saveChantier"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le chantier') + '</button>';
@@ -613,7 +620,7 @@ document.addEventListener('change', function (e) {
     render(); return;
   }
   if (p === 'form.modele') { var m = findMachine(el.value); if (m) applyMachine(S.form, m); render(); return; }
-  if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
+  if (el.getAttribute('data-rerender') || p === 'form.fluideAutre' || p === 'form.longueur') render();
 });
 document.addEventListener('keydown', function (e) {
   if (e.key !== 'Enter') return;
