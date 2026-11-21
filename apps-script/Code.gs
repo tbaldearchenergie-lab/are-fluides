@@ -36,6 +36,7 @@ function api(req) {
       getChantier: function (d) { return getChantier_(d.id); },
       saveChantier: function (d) { return saveChantier_(d); },
       listFluides: listFluides_,
+      extractReleve: function (d) { return extractReleve_(d); },
       changePassword: function (d) { return changePassword_(user, d); },
       listOperateurs: function () { admin_(user); return listOperateurs_(); },
       saveOperateur: function (d) { admin_(user); return saveOperateur_(d, user); },
@@ -474,4 +475,86 @@ function listFluides_() {
   return readTable_(SH.fluides).rows.map(function (f) {
     return { code: String(f['Code']), gwp: Number(f['GWP']) || 0, classe: f['Classe de sécurité'], inflammable: String(f['Inflammable']).toLowerCase() === 'oui' };
   });
+}
+
+/* ------------------------------------------------------------------ Lecture de la feuille de relevé (API Claude) */
+
+var CLAUDE = { url: 'https://api.anthropic.com/v1/messages', model: 'claude-sonnet-5-5', version: '2023-06-01' };
+var TYPES_INSTALL = ['PAC AE', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
+
+function claudeKey_() {
+  var k = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!k) throw new Error('Lecture automatique pas encore activée : la clé API Claude n’est pas configurée dans le script.');
+  return k;
+}
+
+function callClaude_(content, maxTokens) {
+  var res = UrlFetchApp.fetch(CLAUDE.url, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'x-api-key': claudeKey_(), 'anthropic-version': CLAUDE.version },
+    payload: JSON.stringify({ model: CLAUDE.model, max_tokens: maxTokens || 1200, messages: [{ role: 'user', content: content }] })
+  });
+  var code = res.getResponseCode(), body = {};
+  try { body = JSON.parse(res.getContentText()); } catch (e) { /* réponse non JSON */ }
+  if (code === 401) throw new Error('Clé API Claude refusée : vérifie la clé enregistrée dans le script.');
+  if (code === 400 && /credit/i.test(res.getContentText())) throw new Error('Plus de crédit sur le compte API Claude : recharge-le dans la Console Claude.');
+  if (code === 429 || code === 529) throw new Error('Le service de lecture est occupé, réessaie dans une minute.');
+  if (code !== 200) throw new Error('Lecture impossible (erreur ' + code + ')' + (body.error && body.error.message ? ' : ' + body.error.message : '.'));
+  return (body.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('');
+}
+
+/** Reçoit une photo (ou un PDF) de la première page de la feuille de relevé et renvoie les champs du chantier. */
+function extractReleve_(d) {
+  var mime = String(d.mime || '');
+  var data = String(d.data || '');
+  if (!data) throw new Error('Aucune image reçue.');
+  if (data.length > 25 * 1024 * 1024) throw new Error('Fichier trop lourd : prends une photo de la première page seulement.');
+  var isPdf = mime === 'application/pdf';
+  if (!isPdf && ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].indexOf(mime) < 0) throw new Error('Format non pris en charge : envoie une photo (JPEG, PNG) ou un PDF.');
+  var block = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: data } }
+    : { type: 'image', source: { type: 'base64', media_type: mime, data: data } };
+  var prompt = [
+    'Tu lis la feuille de relevé (visite technique) d’une entreprise française qui installe des pompes à chaleur chez des particuliers.',
+    isPdf ? 'Ne regarde que la première page du document.' : 'C’est une photo de la première page, parfois remplie à la main.',
+    'Extrais les informations suivantes et réponds UNIQUEMENT par un objet JSON, sans texte autour :',
+    '{',
+    '  "prenom": prénom du client,',
+    '  "nom": nom de famille du client (si un couple : "M. et Mme X" -> nom "X"),',
+    '  "adresse": numéro et rue du chantier,',
+    '  "cp": code postal (5 chiffres),',
+    '  "ville": ville,',
+    '  "tel": téléphone,',
+    '  "email": e-mail du client,',
+    '  "projet": numéro de projet / de dossier / de devis,',
+    '  "type": une valeur parmi ' + JSON.stringify(TYPES_INSTALL) + ' (PAC air/eau = "PAC AE"),',
+    '  "marque": marque de l’unité extérieure (ex. DAIKIN, VIESSMANN),',
+    '  "modele": modèle / référence de l’unité extérieure (ex. ERGA04EV),',
+    '  "fluide": fluide frigorigène (ex. R32, R410A),',
+    '  "longueur": longueur des liaisons frigorifiques en mètres (nombre),',
+    '  "precharge": longueur de précharge en mètres (nombre),',
+    '  "gpm": charge complémentaire en grammes par mètre (nombre),',
+    '  "illisible": liste des champs présents sur la feuille mais que tu n’as pas pu lire avec certitude',
+    '}',
+    'Règles : mets "" pour toute information absente ou illisible ; ne devine jamais ; recopie les nombres sans unité, avec un point décimal.'
+  ].join('\n');
+  var text = callClaude_([block, { type: 'text', text: prompt }], 1200);
+  var i = text.indexOf('{'), j = text.lastIndexOf('}');
+  if (i < 0 || j < i) throw new Error('La feuille n’a pas pu être lue : réessaie avec une photo plus nette, bien à plat.');
+  var raw;
+  try { raw = JSON.parse(text.slice(i, j + 1)); } catch (e) { throw new Error('La feuille n’a pas pu être lue : réessaie avec une photo plus nette.'); }
+  var keys = ['prenom', 'nom', 'adresse', 'cp', 'ville', 'tel', 'email', 'projet', 'type', 'marque', 'modele', 'fluide', 'longueur', 'precharge', 'gpm'];
+  var out = {};
+  keys.forEach(function (k) { var v = raw[k]; out[k] = v === null || v === undefined ? '' : String(v).trim().slice(0, 200); });
+  if (out.type && TYPES_INSTALL.indexOf(out.type) < 0) out.type = '';
+  if (out.fluide) out.fluide = out.fluide.toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R');
+  ['longueur', 'precharge', 'gpm'].forEach(function (k) { out[k] = out[k].replace('.', ','); });
+  out.illisible = Array.isArray(raw.illisible) ? raw.illisible.map(String).slice(0, 15) : [];
+  return out;
+}
+
+/** À lancer une fois depuis l'éditeur (▶ Exécuter) : autorise les appels externes et vérifie la clé. */
+function testerCleClaude() {
+  var t = callClaude_([{ type: 'text', text: 'Réponds simplement : OK' }], 10);
+  Logger.log('Clé Claude opérationnelle, réponse : ' + t);
 }

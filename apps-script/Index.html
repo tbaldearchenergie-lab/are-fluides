@@ -136,6 +136,7 @@ var ICON = {
   plus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   search: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>',
   users: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 010 7M18.5 14.8c1.6.8 2.6 2.6 3 5.2"/></svg>',
+  camera: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
   drop: '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c3 4 5 6.5 5 9.5a5 5 0 01-10 0C7 9.5 9 7 12 3z"/><path d="M10 14.5a2 2 0 002 2"/></svg>'
 };
 
@@ -179,6 +180,7 @@ var A = {
     S.msg = arg === 'switch' ? { text: 'Changement d’opérateur : le nouvel opérateur se connecte avec son e-mail et son mot de passe.' } : null;
     render();
   },
+  pickReleve: function () { var i = document.getElementById('releveInput'); if (i) i.click(); },
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
   newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
@@ -294,6 +296,12 @@ var V = {
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
     else if (!S.chantiers.length) h += '<div class="note center">Aucun chantier pour l’instant. Crée le premier avec « Nouveau chantier ».</div>';
     else if (!list.length) h += '<div class="note center">Aucun chantier ne correspond à « ' + esc(S.search) + ' ».</div>';
+    var pager = pages > 1 ?
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">' +
+      '<button class="btn out" style="width:auto;min-width:120px;min-height:46px" data-act="pagePrev"' + (page === 0 ? ' disabled' : '') + '>‹ Précédent</button>' +
+      '<span class="note" aria-live="polite">Page ' + (page + 1) + ' / ' + pages + '</span>' +
+      '<button class="btn out" style="width:auto;min-width:120px;min-height:46px" data-act="pageNext"' + (page >= pages - 1 ? ' disabled' : '') + '>Suivant ›</button></div>' : '';
+    h += pager;
     h += '<div id="list" style="display:flex;flex-direction:column;gap:10px">' + list.slice(start, start + PAGE).map(function (c) {
       return '<button class="item" data-act="openChantier" data-arg="' + esc(c.id) + '"><span class="top"><span class="badge">' + esc(c.type || '—') + '</span>' +
         '<span class="badge ' + (c.misEnService ? 'grey' : 'warn') + '">' + (c.misEnService ? 'MES ' + esc(c.dateMes) : 'À mettre en service') + '</span></span>' +
@@ -301,13 +309,7 @@ var V = {
         '<span class="note">' + esc([c.ville, c.projet].filter(Boolean).join(' · ')) + '</span>' +
         '<span style="font-size:14px">' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'Unité extérieure à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</span></button>';
     }).join('') + '</div>';
-    if (pages > 1) {
-      h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px">' +
-        '<button class="btn out" style="width:auto;min-width:120px" data-act="pagePrev"' + (page === 0 ? ' disabled' : '') + '>‹ Précédent</button>' +
-        '<span class="note" aria-live="polite">Page ' + (page + 1) + ' / ' + pages + '</span>' +
-        '<button class="btn out" style="width:auto;min-width:120px" data-act="pageNext"' + (page >= pages - 1 ? ' disabled' : '') + '>Suivant ›</button></div>' +
-        '<div class="note center">' + list.length + ' chantiers' + (q ? ' trouvés' : '') + ' · ' + PAGE + ' par page</div>';
-    }
+    if (pages > 1) h += pager + '<div class="note center">' + list.length + ' chantiers' + (q ? ' trouvés' : '') + ' · ' + PAGE + ' par page</div>';
     return h;
   },
 
@@ -330,7 +332,16 @@ var V = {
     var gwpHint = f.gwpManuel ? 'Valeur saisie à la main' : (info ? 'Rempli automatiquement pour ' + fl + ' : ' + info.gwp + ' · modifiable' : (fl ? 'Fluide inconnu : saisis le GWP à la main' : ''));
     var opts = ['', 'R32', 'R410A', 'R454C', 'Autre'].map(function (v) { return '<option value="' + v + '"' + (f.fluideChoix === v ? ' selected' : '') + '>' + (v === '' ? 'Non renseigné' : v === 'Autre' ? 'Autre…' : v) + '</option>'; }).join('');
     var types = TYPES.map(function (v) { return '<option' + (f.type === v ? ' selected' : '') + '>' + esc(v) + '</option>'; }).join('');
-    return msgBox() + '<div class="sec">Client</div><div class="card">' +
+    var lu = S.form._lu;
+    var reader = S.reading
+      ? '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><div class="spin" style="margin:0;flex:0 0 auto"></div><div><b>Lecture de la feuille…</b><div class="note">10 à 30 secondes, garde l’appli ouverte.</div></div></div>'
+      : '<button type="button" class="item" data-act="pickReleve" style="flex-direction:row;align-items:center;gap:14px;border:2px solid var(--green)">' +
+        '<span style="width:48px;height:48px;border-radius:12px;background:var(--mint);color:var(--green);display:flex;align-items:center;justify-content:center;flex:0 0 auto">' + ICON.camera + '</span>' +
+        '<span><b style="font-size:16px">' + (lu ? 'Relire une autre photo' : 'Photographier la feuille de relevé') + '</b><span class="note" style="display:block">Première page, bien à plat et lisible. Photo ou PDF.</span></span></button>' +
+        '<input type="file" id="releveInput" accept="image/*,application/pdf" class="hidden">';
+    var luBox = lu ? '<div class="msg ok">Feuille lue : ' + lu.n + ' champ' + (lu.n > 1 ? 's' : '') + ' rempli' + (lu.n > 1 ? 's' : '') + '. Vérifie-les et corrige si besoin avant d’enregistrer.' +
+      (lu.illisible.length ? '<br>À vérifier en particulier : ' + esc(lu.illisible.join(', ')) + '.' : '') + '</div>' : '';
+    return msgBox() + (f.id ? '' : reader + luBox) + '<div class="sec">Client</div><div class="card">' +
       '<div class="g2">' + field('Prénom', 'form.prenom') + field('Nom *', 'form.nom') + '</div>' +
       field('Adresse', 'form.adresse') + '<div class="g2">' + field('Code postal', 'form.cp', { mode: 'numeric' }) + field('Ville', 'form.ville') + '</div>' +
       '<div class="g2">' + field('Téléphone', 'form.tel', { type: 'tel' }) + field('N° projet', 'form.projet') + '</div>' + field('E-mail', 'form.email', { type: 'email' }) + '</div>' +
@@ -434,6 +445,51 @@ document.addEventListener('input', function (e) {
   setPath(p, el.value);
   if (p === 'search') S.page = 0;
   if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
+});
+/* ---------- Feuille de relevé : photo -> image allégée -> lecture par Claude -> pré-remplissage ---------- */
+function fileToPayload(file) {
+  return new Promise(function (resolve, reject) {
+    if (file.type === 'application/pdf') {
+      if (file.size > 15 * 1024 * 1024) return reject(new Error('PDF trop lourd : envoie seulement la première page (ou une photo).'));
+      var fr = new FileReader();
+      fr.onload = function () { resolve({ mime: 'application/pdf', data: String(fr.result).split(',')[1] }); };
+      fr.onerror = function () { reject(new Error('Impossible de lire le fichier.')); };
+      return fr.readAsDataURL(file);
+    }
+    var url = URL.createObjectURL(file), img = new Image();
+    img.onload = function () {
+      var max = 2000, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h));
+      var c = document.createElement('canvas'); c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve({ mime: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.85).split(',')[1] });
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Image illisible : reprends la photo.')); };
+    img.src = url;
+  });
+}
+function applyReleve(r) {
+  var f = S.form, n = 0;
+  ['prenom', 'nom', 'adresse', 'cp', 'ville', 'tel', 'email', 'projet', 'type', 'marque', 'modele', 'longueur', 'precharge', 'gpm'].forEach(function (k) {
+    if (r[k]) { f[k] = r[k]; n++; }
+  });
+  if (r.fluide) {
+    n++;
+    if (MAIN_FLUIDS.indexOf(r.fluide) >= 0) { f.fluideChoix = r.fluide; f.fluideAutre = ''; }
+    else { f.fluideChoix = 'Autre'; f.fluideAutre = r.fluide; }
+    f.gwpManuel = '';
+  }
+  f._lu = { n: n, illisible: r.illisible || [] };
+}
+document.addEventListener('change', function (e) {
+  if (e.target.id !== 'releveInput') return;
+  var file = e.target.files && e.target.files[0];
+  if (!file) return;
+  S.reading = true; S.msg = null; render();
+  fileToPayload(file)
+    .then(function (p) { return call('extractReleve', p); })
+    .then(function (r) { S.reading = false; applyReleve(r); render(); window.scrollTo(0, 0); })
+    .catch(function (err) { S.reading = false; S.msg = { err: true, text: err.message }; render(); window.scrollTo(0, 0); });
 });
 document.addEventListener('change', function (e) {
   var el = e.target, p = el.getAttribute && el.getAttribute('data-bind');
