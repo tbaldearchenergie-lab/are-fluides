@@ -9,7 +9,7 @@
 var APP = { name: 'ARE Fluides', version: 'L1', sessionSeconds: 6 * 60 * 60, hashRounds: 300 };
 var SH = {
   params: 'Paramètres', ops: 'Opérateurs', chantiers: 'Chantiers', mouv: 'Mouvements', bout: 'Bouteilles',
-  outils: 'Outillage', dist: 'Distributeurs', fluides: 'Fluides', comptes: '_Comptes'
+  outils: 'Outillage', dist: 'Distributeurs', fluides: 'Fluides', machines: 'Machines', comptes: '_Comptes'
 };
 
 /* ------------------------------------------------------------------ Page web */
@@ -36,6 +36,7 @@ function api(req) {
       getChantier: function (d) { return getChantier_(d.id); },
       saveChantier: function (d) { return saveChantier_(d); },
       listFluides: listFluides_,
+      listMachines: listMachines_,
       extractReleve: function (d) { return extractReleve_(d); },
       changePassword: function (d) { return changePassword_(user, d); },
       listOperateurs: function () { admin_(user); return listOperateurs_(); },
@@ -477,10 +478,40 @@ function listFluides_() {
   });
 }
 
+/* ------------------------------------------------------------------ Machines (base des PAC) */
+
+/** Onglet « Machines » : une ligne par unité extérieure. Absent = liste vide (l'appli reste utilisable). */
+function listMachines_() {
+  if (!ss_().getSheetByName(SH.machines)) return [];
+  var dec = function (v) { return v === '' || v === null || v === undefined ? '' : String(v).replace('.', ','); };
+  return readTable_(SH.machines).rows.filter(function (r) { return String(r['Modèle UE'] || '').trim(); }).map(function (r) {
+    return {
+      marque: String(r['Marque'] || '').trim(), modele: String(r['Modèle UE']).trim(), gamme: String(r['Gamme'] || ''),
+      type: TYPES_INSTALL.indexOf(String(r['Type d’installation'])) >= 0 ? String(r['Type d’installation']) : '',
+      liaison: String(r['Liaisons'] || ''), fluide: String(r['Fluide'] || '').toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R'),
+      charge: dec(r['Charge usine (kg)']), precharge: dec(r['Longueur préchargée (m)']), gpm: dec(r['Charge supplémentaire (g/m)']),
+      remarque: String(r['Remarque'] || '')
+    };
+  });
+}
+
+function normModele_(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
+/** Retrouve une machine à partir d'un modèle lu sur une feuille ou une plaque (tolère tirets, espaces et suffixes). */
+function findMachine_(modele) {
+  var k = normModele_(modele);
+  if (k.length < 4) return null;
+  var list = listMachines_();
+  var exact = list.filter(function (m) { return normModele_(m.modele) === k; })[0];
+  if (exact) return exact;
+  var near = list.filter(function (m) { var n = normModele_(m.modele); return n.length >= 5 && (k.indexOf(n) === 0 || n.indexOf(k) === 0); });
+  return near.length === 1 ? near[0] : null;
+}
+
 /* ------------------------------------------------------------------ Lecture de la feuille de relevé (API Claude) */
 
 var CLAUDE = { url: 'https://api.anthropic.com/v1/messages', model: 'claude-sonnet-5-5', version: '2023-06-01' };
-var TYPES_INSTALL = ['PAC AE', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
+var TYPES_INSTALL = ['PAC AE', 'PAC AA Monosplit', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
 
 function claudeKey_() {
   var k = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
@@ -524,8 +555,6 @@ function extractReleve_(d) {
     '  "adresse": numéro et rue du chantier,',
     '  "cp": code postal (5 chiffres),',
     '  "ville": ville,',
-    '  "tel": téléphone,',
-    '  "email": e-mail du client,',
     '  "projet": numéro de projet / de dossier / de devis,',
     '  "type": une valeur parmi ' + JSON.stringify(TYPES_INSTALL) + ' (PAC air/eau = "PAC AE"),',
     '  "marque": marque de l’unité extérieure (ex. DAIKIN, VIESSMANN),',
@@ -543,13 +572,24 @@ function extractReleve_(d) {
   if (i < 0 || j < i) throw new Error('La feuille n’a pas pu être lue : réessaie avec une photo plus nette, bien à plat.');
   var raw;
   try { raw = JSON.parse(text.slice(i, j + 1)); } catch (e) { throw new Error('La feuille n’a pas pu être lue : réessaie avec une photo plus nette.'); }
-  var keys = ['prenom', 'nom', 'adresse', 'cp', 'ville', 'tel', 'email', 'projet', 'type', 'marque', 'modele', 'fluide', 'longueur', 'precharge', 'gpm'];
+  var keys = ['prenom', 'nom', 'adresse', 'cp', 'ville', 'projet', 'type', 'marque', 'modele', 'fluide', 'longueur', 'precharge', 'gpm'];
   var out = {};
   keys.forEach(function (k) { var v = raw[k]; out[k] = v === null || v === undefined ? '' : String(v).trim().slice(0, 200); });
   if (out.type && TYPES_INSTALL.indexOf(out.type) < 0) out.type = '';
   if (out.fluide) out.fluide = out.fluide.toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R');
   ['longueur', 'precharge', 'gpm'].forEach(function (k) { out[k] = out[k].replace('.', ','); });
   out.illisible = Array.isArray(raw.illisible) ? raw.illisible.map(String).slice(0, 15) : [];
+  // Complète avec la base des machines quand le modèle d'UE est reconnu
+  var m = out.modele ? findMachine_(out.modele) : null;
+  if (m) {
+    out.modele = m.modele;
+    if (!out.marque) out.marque = m.marque;
+    if (!out.fluide) out.fluide = m.fluide;
+    if (!out.precharge && m.precharge) out.precharge = m.precharge;
+    if (!out.gpm && m.gpm) out.gpm = m.gpm;
+    if (!out.type && m.type) out.type = m.type;
+    out.machine = true;
+  }
   return out;
 }
 

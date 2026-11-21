@@ -72,10 +72,10 @@
 /* ============================== État ============================== */
 var S = {
   token: null, user: null, screen: 'loading', stack: [], status: null, msg: null, loaded: false,
-  chantiers: [], search: '', page: 0, cur: null, form: null, fluides: [],
+  chantiers: [], search: '', page: 0, cur: null, form: null, fluides: [], machines: [],
   ops: [], opForm: null, pwd: { oldPassword: '', newPassword: '' }, busy: false
 };
-var TYPES = ['PAC AE', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
+var TYPES = ['PAC AE', 'PAC AA Monosplit', 'PAC AA Gainable', 'PAC AA Multisplit', 'PAC AA Multisplit gainable', 'Ballon thermodynamique'];
 var MAIN_FLUIDS = ['R32', 'R410A', 'R454C'];
 var PAGE = 10; // chantiers par page sur l'accueil
 
@@ -143,12 +143,13 @@ var ICON = {
 /* ============================== Données ============================== */
 function loadChantiers() {
   render();
-  Promise.all([call('listChantiers'), S.fluides.length ? Promise.resolve(S.fluides) : call('listFluides')])
-    .then(function (r) { S.chantiers = r[0]; S.fluides = r[1]; S.loaded = true; render(); })
+  Promise.all([call('listChantiers'), S.fluides.length ? Promise.resolve(S.fluides) : call('listFluides'),
+    S.machines.length ? Promise.resolve(S.machines) : call('listMachines').catch(function () { return []; })])
+    .then(function (r) { S.chantiers = r[0]; S.fluides = r[1]; S.machines = r[2] || []; S.loaded = true; render(); })
     .catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
 }
 function emptyForm() {
-  return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', tel: '', email: '', marque: '', modele: '',
+  return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', marque: '', modele: '',
     longueur: '', precharge: '', gpm: '', type: 'PAC AE', fluideChoix: 'R32', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '' };
 }
 function formFromChantier(c) {
@@ -159,6 +160,34 @@ function formFromChantier(c) {
   var auto = fluidInfo(c.fluide);
   f.gwpManuel = (c.gwp && (!auto || String(auto.gwp) !== String(c.gwp))) ? c.gwp : '';
   return f;
+}
+function normModele(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+function findMachine(modele) {
+  var k = normModele(modele);
+  if (k.length < 4) return null;
+  return S.machines.filter(function (m) { return normModele(m.modele) === k; })[0] || null;
+}
+/** Modèle reconnu dans la base : remplit marque, fluide, précharge, g/m et type. */
+function applyMachine(f, m) {
+  f.modele = m.modele;
+  if (m.marque) f.marque = m.marque;
+  if (m.precharge) f.precharge = m.precharge;
+  if (m.gpm) f.gpm = m.gpm;
+  if (m.type) f.type = m.type;
+  if (m.fluide) {
+    if (MAIN_FLUIDS.indexOf(m.fluide) >= 0) { f.fluideChoix = m.fluide; f.fluideAutre = ''; }
+    else { f.fluideChoix = 'Autre'; f.fluideAutre = m.fluide; }
+    f.gwpManuel = '';
+  }
+}
+function machineHint(f) {
+  var m = findMachine(f.modele);
+  if (!m) return f.modele && S.machines.length ? '<div class="note">Modèle absent de la base machines : remplis les champs à la main.</div>' : '';
+  var bits = [m.fluide, m.charge ? 'charge usine ' + m.charge + ' kg' : '', m.precharge ? 'préchargé ' + m.precharge + ' m' : '', m.gpm ? m.gpm + ' g/m' : ''].filter(Boolean);
+  var manque = [!m.precharge && /frigo/i.test(m.liaison) ? 'précharge' : '', !m.gpm && /frigo/i.test(m.liaison) ? 'g/m' : ''].filter(Boolean);
+  return '<div class="msg ok" style="margin:0">' + esc(m.marque + ' ' + m.gamme) + '<br>' + esc(bits.join(' · ')) +
+    (manque.length ? '<br>' + esc(manque.join(' et ')) + ' : voir la notice d’installation.' : '') +
+    (m.remarque ? '<br><span style="font-size:13px">' + esc(m.remarque) + '</span>' : '') + '</div>';
 }
 function formFluid(f) { return f.fluideChoix === 'Autre' ? (f.fluideAutre || '').trim() : f.fluideChoix; }
 
@@ -189,7 +218,7 @@ var A = {
   saveChantier: function () {
     var f = S.form, fl = formFluid(f);
     var data = {
-      id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville, tel: f.tel, email: f.email,
+      id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville,
       marque: f.marque, modele: f.modele, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
       fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires
     };
@@ -320,7 +349,7 @@ var V = {
       ['Mise en service', c.dateMes || 'pas encore']];
     return msgBox() + '<div class="card" style="gap:6px"><div style="font-size:18px;font-weight:700">' + esc(c.client) + '</div>' +
       '<div class="note">' + esc([c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Adresse à compléter') + '</div>' +
-      '<div class="note">' + esc([c.tel, c.email, c.projet].filter(Boolean).join(' · ')) + '</div></div>' +
+      (c.projet ? '<div class="note">Projet ' + esc(c.projet) + '</div>' : '') + '</div>' +
       '<div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + esc(r[1] || '—') + '</span></div>'; }).join('') + '</div>' +
       (c.commentaires ? '<div class="card"><div class="note">' + esc(c.commentaires) + '</div></div>' : '') +
       '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' +
@@ -344,8 +373,11 @@ var V = {
     return msgBox() + (f.id ? '' : reader + luBox) + '<div class="sec">Client</div><div class="card">' +
       '<div class="g2">' + field('Prénom', 'form.prenom') + field('Nom *', 'form.nom') + '</div>' +
       field('Adresse', 'form.adresse') + '<div class="g2">' + field('Code postal', 'form.cp', { mode: 'numeric' }) + field('Ville', 'form.ville') + '</div>' +
-      '<div class="g2">' + field('Téléphone', 'form.tel', { type: 'tel' }) + field('N° projet', 'form.projet') + '</div>' + field('E-mail', 'form.email', { type: 'email' }) + '</div>' +
-      '<div class="sec">Unité extérieure</div><div class="card">' + field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) + field('Modèle', 'form.modele', { ph: 'Ex. ERGA04EV' }) +
+      field('N° projet', 'form.projet') + '</div>' +
+      '<div class="sec">Unité extérieure</div><div class="card">' +
+      '<label>Modèle<input type="text" list="machinesList" autocomplete="off" autocapitalize="characters" data-bind="form.modele" value="' + esc(f.modele) + '" placeholder="Tape le début de la référence, ex. RXM35"></label>' +
+      '<datalist id="machinesList">' + S.machines.map(function (m) { return '<option value="' + esc(m.modele) + '">' + esc(m.marque + ' · ' + m.gamme) + '</option>'; }).join('') + '</datalist>' +
+      machineHint(f) + field('Marque', 'form.marque', { ph: 'Ex. DAIKIN' }) +
       '<div class="note" style="border-top:1px solid var(--line);padding-top:8px">Liaisons frigorifiques</div><div class="g3">' +
       field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div></div>' +
       '<div class="sec">Installation</div><div class="card">' +
@@ -444,6 +476,7 @@ document.addEventListener('input', function (e) {
   if (!p || el.type === 'checkbox') return;
   setPath(p, el.value);
   if (p === 'search') S.page = 0;
+  if (p === 'form.modele') { var m = findMachine(el.value); if (m && m.modele === el.value) { applyMachine(S.form, m); render(); } }
   if (el.getAttribute('data-live')) { var pos = el.selectionStart; render(); var n = document.querySelector('[data-bind="search"]'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} } }
 });
 /* ---------- Feuille de relevé : photo -> image allégée -> lecture par Claude -> pré-remplissage ---------- */
@@ -470,7 +503,7 @@ function fileToPayload(file) {
 }
 function applyReleve(r) {
   var f = S.form, n = 0;
-  ['prenom', 'nom', 'adresse', 'cp', 'ville', 'tel', 'email', 'projet', 'type', 'marque', 'modele', 'longueur', 'precharge', 'gpm'].forEach(function (k) {
+  ['prenom', 'nom', 'adresse', 'cp', 'ville', 'projet', 'type', 'marque', 'modele', 'longueur', 'precharge', 'gpm'].forEach(function (k) {
     if (r[k]) { f[k] = r[k]; n++; }
   });
   if (r.fluide) {
@@ -496,6 +529,7 @@ document.addEventListener('change', function (e) {
   if (!p) return;
   if (el.type === 'checkbox') { setPath(p, el.checked); return; }
   setPath(p, el.value);
+  if (p === 'form.modele') { var m = findMachine(el.value); if (m) applyMachine(S.form, m); render(); return; }
   if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();
 });
 document.addEventListener('keydown', function (e) {
