@@ -47,6 +47,8 @@ function api(req) {
       saveCerfa: function (d) { return saveCerfa_(d, user); },
       cerfaData: function (d) { return cerfaData_(d, user); },
       buildReport: function (d) { return buildReport_(d, user); },
+      updateReport: function (d) { return updateReport_(d, user); },
+      deleteReport: function (d) { return deleteReport_(d, user); },
       updateMes: function (d) { return updateMes_(d, user); },
       deleteManip: function (d) { return deleteManip_(d, user); },
       deleteMes: function (d) { return deleteMes_(d, user); },
@@ -721,7 +723,7 @@ function testerCleClaude() {
 
 var MES = {
   sheet: 'Mises en service',
-  headers: ['ID', 'ID chantier', 'Date', 'Opérateur ID', 'Opérateur', 'N° série UE', 'N° série UI', 'Photos', 'Rapport (lien)', 'Rapport (ID)', 'Signature (ID)', 'Créée le', 'Modifiée le'],
+  headers: ['ID', 'ID chantier', 'Date', 'Opérateur ID', 'Opérateur', 'N° série UE', 'N° série UI', 'Photos', 'Rapport (lien)', 'Rapport (ID)', 'Signature (ID)', 'Créée le', 'Modifiée le', 'Commentaire rapport'],
   mouvExtra: ['ID chantier', 'ID MES', 'Opérateur ID', 'CERFA (lien)', 'CERFA (ID)', 'Données'],
   trashMes: '_MES supprimées', trashMouv: '_Mouvements supprimés',
   ops: {
@@ -847,6 +849,8 @@ function mesPublic_(row, c, user) {
   return {
     id: String(row['ID']), date: String(row['Date'] || ''), operateur: String(row['Opérateur'] || ''), operateurId: String(row['Opérateur ID'] || ''),
     serieUE: String(row['N° série UE'] || ''), serieUI: String(row['N° série UI'] || ''), photos: photos.length,
+    photoList: photos.map(function (ph) { return { slot: ph.slot, id: ph.id, url: 'https://drive.google.com/file/d/' + ph.id + '/view' }; }),
+    commentaire: String(row['Commentaire rapport'] || ''),
     rapport: String(row['Rapport (lien)'] || ''), manips: manips, peutModifier: canEditMes_(c, row, user)
   };
 }
@@ -1156,6 +1160,7 @@ function buildReport_(d, user) {
   var c = getChantier_(d.chantierId);
   var row = mesRows_(c.id)[0];
   if (!row) throw new Error('Aucune mise en service sur ce chantier.');
+  if (!canEditMes_(c, row, user) && String(row['Opérateur ID']) !== user.id) throw new Error('Tu ne peux pas modifier ce rapport.');
   var p = params_(), tz = Session.getScriptTimeZone();
   var manips = mouvTable_().rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); });
   var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
@@ -1173,6 +1178,7 @@ function buildReport_(d, user) {
     '<h2>Opérations réalisées</h2><table>' + (manips.length ? manips.map(function (r) {
       return '<tr><th>' + e(r['Date']) + ' · ' + e(r['Opération']) + '</th><td>' + e(r['Observations']) + (r['N° CERFA'] ? '<br><span style="font-weight:normal">CERFA ' + e(r['N° CERFA']) + '</span>' : '') + '</td></tr>';
     }).join('') : '<tr><th>' + e(row['Date']) + '</th><td>Démarrage sans manipulation de fluide.</td></tr>') + '</table>';
+  if (String(row['Commentaire rapport'] || '').trim()) html += '<h2>Commentaires</h2><p style="white-space:pre-wrap">' + e(row['Commentaire rapport']) + '</p>';
   if (photos.length) {
     html += '<h2>Photos</h2>';
     photos.slice(0, 12).forEach(function (ph) {
@@ -1189,6 +1195,33 @@ function buildReport_(d, user) {
   var file = chantierFolder_(c).createFile(blob);
   writeRow_(readTable_(MES.sheet), { 'Rapport (lien)': file.getUrl(), 'Rapport (ID)': file.getId() }, row._row);
   return { url: file.getUrl(), name: name };
+}
+
+/* ---------- Rapport d'installation : modification et suppression */
+
+/** Modifie le rapport (commentaire, photos retirées ou ajoutées) puis le refait. */
+function updateReport_(d, user) {
+  var c = getChantier_(d.chantierId);
+  var row = mesRows_(c.id)[0];
+  if (!row) throw new Error('Aucune mise en service sur ce chantier.');
+  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut modifier le rapport.');
+  var photos = []; try { photos = JSON.parse(row['Photos'] || '[]'); } catch (e) { photos = []; }
+  var remove = d.removePhotos || [];
+  photos = photos.filter(function (ph) { if (remove.indexOf(ph.id) >= 0) { trashFile_(ph.id); return false; } return true; });
+  (d.addPhotos || []).forEach(function (ph) { if (ph && ph.id && MES.photoSlots.indexOf(ph.slot) >= 0) photos.push({ slot: ph.slot, id: ph.id }); });
+  writeRow_(readTable_(MES.sheet), { 'Photos': JSON.stringify(photos), 'Commentaire rapport': String(d.commentaire || '').slice(0, 3000), 'Modifiée le': new Date() }, row._row);
+  return buildReport_({ chantierId: c.id }, user);
+}
+
+/** Supprime le PDF du rapport (la mise en service et les CERFA restent). */
+function deleteReport_(d, user) {
+  var c = getChantier_(d.chantierId);
+  var row = mesRows_(c.id)[0];
+  if (!row) throw new Error('Aucune mise en service sur ce chantier.');
+  if (!canEditMes_(c, row, user)) throw new Error('Seul l’opérateur qui a fait la mise en service, le créateur du chantier ou un administrateur peut supprimer le rapport.');
+  trashFile_(String(row['Rapport (ID)'] || ''));
+  writeRow_(readTable_(MES.sheet), { 'Rapport (lien)': '', 'Rapport (ID)': '', 'Modifiée le': new Date() }, row._row);
+  return true;
 }
 
 /* ---------- Modification et suppression */

@@ -308,7 +308,7 @@ var A = {
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
   newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
-  openChantier: function (id) { S.confirmDelete = false; S.confirmMes = false; S.confirmManip = null; S.editMes = null; S.progress = null; S.ctx = null; S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); loadMes().catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
+  openChantier: function (id) { S.confirmDelete = false; S.confirmMes = false; S.confirmRapport = false; S.confirmManip = null; S.editMes = null; S.progress = null; S.ctx = null; S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; go('chantier'); loadMes().catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
   deleteChantier: function () {
     var id = S.cur.id; S.confirmDelete = false;
     run(call('deleteChantier', { id: id }), 'Chantier supprimé.').then(function () {
@@ -587,7 +587,7 @@ function deleteBlock(c) {
     ? '<div class="msg err">Supprimer la fiche chantier de ' + esc(c.client) + ' ? Elle disparaît de la liste (une copie est gardée dans le tableur).</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteChantier">Oui, supprimer</button></div>'
     : '<button class="btn danger" data-act="askDelete">Supprimer ce chantier</button>';
 }
-var TITLES = { mes: 'Mise en service', mesDone: 'Mise en service', setup: 'Première connexion', login: 'Connexion', home: 'Accueil', chantier: 'Fiche chantier', profile: 'Mon profil', admin: 'Gestion des comptes', opForm: 'Compte opérateur', loading: 'Chargement' };
+var TITLES = { rapport: 'Rapport d’installation', mes: 'Mise en service', mesDone: 'Mise en service', setup: 'Première connexion', login: 'Connexion', home: 'Accueil', chantier: 'Fiche chantier', profile: 'Mon profil', admin: 'Gestion des comptes', opForm: 'Compte opérateur', loading: 'Chargement' };
 
 /* ============================== Livraison 2 : mise en service ============================== */
 var PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
@@ -787,10 +787,19 @@ function viewChantierMes(c) {
       '<div class="chips" style="flex-wrap:nowrap">' + (x.lien ? '<a class="chip" style="display:flex;align-items:center;text-decoration:none;color:var(--ink)" target="_blank" rel="noopener" href="' + esc(x.lien) + '">PDF</a>' : '<span class="badge warn">PDF à refaire</span>') +
       (mes.peutModifier ? (S.confirmManip === x.cerfa ? '<button class="chip" data-act="deleteManip" data-arg="' + esc(x.cerfa) + '" style="border-color:var(--warn);color:var(--warn)">Confirmer</button>' : '<button class="chip" data-act="askDeleteManip" data-arg="' + esc(x.cerfa) + '" aria-label="Supprimer la fiche ' + esc(x.cerfa) + '">✕</button>') : '') + '</div></div>';
   }).join('');
-  if (mes.rapport) h += '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(mes.rapport) + '">Rapport d’installation (PDF)</a>';
+  h += '</div><div class="sec">Rapport d’installation</div><div class="card" style="gap:10px">';
+  if (mes.rapport) {
+    h += '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(mes.rapport) + '">Rapport d’installation (PDF)</a>';
+    if (mes.peutModifier) h += '<button class="btn out" data-act="editReport">Modifier le rapport</button>' + (S.confirmRapport
+      ? '<div class="msg err">Supprimer le PDF du rapport ? La mise en service et les CERFA sont gardés, tu pourras recréer le rapport.</div><div class="g2"><button class="btn out" data-act="cancelDeleteReport">Annuler</button><button class="btn danger" data-act="deleteReport">Oui, supprimer</button></div>'
+      : '<button class="btn danger" data-act="askDeleteReport">Supprimer le rapport</button>');
+  } else {
+    h += '<div class="note">Pas de rapport pour cette mise en service.</div>';
+    if (mes.peutModifier) h += '<button class="btn out" data-act="editReport">Créer le rapport d’installation</button>';
+  }
   h += '</div>';
   if (mes.peutModifier) {
-    var missing = mes.manips.filter(function (x) { return !x.lien; }).length || !mes.rapport;
+    var missing = mes.manips.filter(function (x) { return !x.lien; }).length;
     h += '<button class="btn" data-act="addManip">Ajouter une manipulation</button>';
     if (missing) h += '<button class="btn out" data-act="remakeDocs">Refaire les documents (CERFA et rapport)</button>';
     if (S.editMes) {
@@ -925,6 +934,28 @@ V.mes = function () {
   return h;
 };
 
+V.rapport = function () {
+  var r = S.rap, mes = S.ctx.mes;
+  if (r.saving) return '<div class="card center" style="padding:40px 16px"><div class="spin" style="margin:0 auto"></div><b>' + esc(r.saving) + '</b></div>';
+  var h = msgBox() + '<div class="note"><b style="color:var(--ink)">' + esc(S.cur.client) + '</b> · mise en service du ' + esc(mes.date) + '</div>' +
+    '<div class="card"><label>Commentaires du rapport (facultatif)<textarea rows="4" data-bind="rap.commentaire" placeholder="Ex. réglages faits, consignes données au client…">' + esc(r.commentaire) + '</textarea></label></div>' +
+    '<div class="sec">Photos du rapport</div>';
+  S.ctx.photoSlots.forEach(function (slot) {
+    var old = mes.photoList.filter(function (p) { return p.slot === slot; }), added = r.add[slot];
+    h += '<div class="card" style="gap:8px"><b>' + esc(slot) + '</b>' + old.map(function (p, i) {
+      var gone = r.remove.indexOf(p.id) >= 0;
+      return '<div class="manip" style="' + (gone ? 'opacity:.5' : '') + '"><span>' + (gone ? '<s>Photo ' + (i + 1) + '</s> · retirée' : 'Photo ' + (i + 1)) + '</span><div class="chips" style="flex-wrap:nowrap">' +
+        '<a class="chip" style="display:flex;align-items:center;text-decoration:none;color:var(--ink)" target="_blank" rel="noopener" href="' + esc(p.url) + '">Voir</a>' +
+        '<button type="button" class="chip" data-act="toggleRemovePhoto" data-arg="' + esc(p.id) + '">' + (gone ? 'Garder' : '✕') + '</button></div></div>';
+    }).join('') +
+      (added.length ? '<div class="thumbs">' + added.map(function (p, i) { return '<div class="thumb"><img alt="" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removeRapPhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>'; }).join('') + '</div>' : '') +
+      '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Ajouter une photo</button></div>';
+  });
+  h += '<button class="btn" data-act="saveReport">' + (mes.rapport ? 'Enregistrer et refaire le rapport' : 'Créer le rapport') + '</button>' +
+    '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">';
+  return h;
+};
+
 V.mesDone = function () {
   var r = S.mesResult || {}, mes = S.ctx && S.ctx.mes;
   var h = '<div class="card center" style="padding:28px 16px;gap:8px"><div class="logo" style="width:64px;height:64px;background:var(--green);color:#fff">' + ICON.check + '</div>' +
@@ -1013,6 +1044,36 @@ Object.assign(A, {
       .then(function () { S.progress = null; S.msg = { text: 'Fiche ' + no + ' supprimée.' }; return loadMes(); })
       .catch(function (e) { S.progress = null; S.msg = { err: true, text: e.message }; render(); });
   },
+  editReport: function () {
+    var add = {}; S.ctx.photoSlots.forEach(function (sl) { add[sl] = []; });
+    S.rap = { commentaire: S.ctx.mes.commentaire || '', remove: [], add: add }; S.confirmRapport = false; go('rapport');
+  },
+  toggleRemovePhoto: function (id) { var l = S.rap.remove, i = l.indexOf(id); if (i >= 0) l.splice(i, 1); else l.push(id); render(); },
+  removeRapPhoto: function (arg) { var p = arg.split('|'); S.rap.add[p[0]].splice(+p[1], 1); render(); },
+  saveReport: function () {
+    var r = S.rap, c = S.cur, list = [];
+    S.ctx.photoSlots.forEach(function (sl) { r.add[sl].forEach(function (p) { list.push({ slot: sl, p: p }); }); });
+    var i = 0;
+    var up = function () {
+      if (i >= list.length) return Promise.resolve();
+      var u = list[i++]; r.saving = 'Envoi des photos (' + i + ' / ' + list.length + ')…'; render();
+      if (u.p.id) return up();
+      return call('uploadPhoto', { chantierId: c.id, slot: u.slot, data: u.p.b64 }).then(function (x) { u.p.id = x.id; return up(); });
+    };
+    up().then(function () {
+      r.saving = 'Création du rapport…'; render();
+      return call('updateReport', { chantierId: c.id, commentaire: r.commentaire, removePhotos: r.remove, addPhotos: list.map(function (u) { return { slot: u.slot, id: u.p.id }; }) });
+    }).then(function () { return loadMes(); }).then(function () {
+      S.rap = null; S.stack = ['home']; S.screen = 'chantier'; S.msg = { text: 'Rapport d’installation enregistré.' }; render(); window.scrollTo(0, 0);
+    }).catch(function (e) { r.saving = null; S.msg = { err: true, text: e.message }; render(); });
+  },
+  askDeleteReport: function () { S.confirmRapport = true; render(); },
+  cancelDeleteReport: function () { S.confirmRapport = false; render(); },
+  deleteReport: function () {
+    S.confirmRapport = false; S.progress = 'Suppression du rapport…'; render();
+    call('deleteReport', { chantierId: S.cur.id }).then(function () { S.progress = null; S.msg = { text: 'Rapport supprimé.' }; return loadMes(); })
+      .catch(function (e) { S.progress = null; S.msg = { err: true, text: e.message }; render(); });
+  },
   askDeleteMes: function () { S.confirmMes = true; render(); },
   cancelDeleteMes: function () { S.confirmMes = false; render(); },
   deleteMes: function () {
@@ -1048,11 +1109,11 @@ document.addEventListener('change', function (e) {
   var id = e.target.id;
   if (id !== 'photoInput' && id !== 'plateInput') return;
   var file = e.target.files && e.target.files[0];
-  if (!file || !S.mes) return;
+  if (!file || (!S.mes && !S.rap)) return;
   if (id === 'photoInput') {
-    var slot = S.pendingSlot;
+    var slot = S.pendingSlot, target = S.screen === 'rapport' ? S.rap.add : S.mes.photos;
     fileToPayload(file, 1600).then(function (p) {
-      S.mes.photos[slot].push({ b64: p.data, url: 'data:image/jpeg;base64,' + p.data }); render();
+      target[slot].push({ b64: p.data, url: 'data:image/jpeg;base64,' + p.data }); render();
     }).catch(function (err) { S.msg = { err: true, text: err.message }; render(); });
     return;
   }
