@@ -85,7 +85,9 @@
   .steps .st{display:flex;flex-direction:column;gap:5px;min-width:0}
   .steps i{display:block;height:6px;border-radius:99px;background:#D5DCD7}
   .steps .st.on i{background:var(--green)}
-  .steps span{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .steps span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .stepname{font-size:15px;color:var(--muted);margin-top:-4px}
+  .stepname b{color:var(--ink)}
   .steps .cur span{color:var(--ink);font-weight:700}
   .item.opt{border:2px solid transparent}
   .item.opt.on{border-color:var(--green);background:var(--mint)}
@@ -627,7 +629,7 @@ var TITLES = { rapport: 'Rapport d’installation', mes: 'Mise en service', mesD
 var PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
 var NATURES = [['assemblage', 'Assemblage'], ['mes', 'Mise en service'], ['modif', 'Modification'], ['maintenance', 'Maintenance'],
   ['ctrlPerio', 'Contrôle d’étanchéité périodique'], ['ctrlNonPerio', 'Contrôle d’étanchéité non périodique'], ['demantel', 'Démantèlement'], ['autre', 'Autre']];
-var MES_STEP_LABELS = { equip: 'Équipement', op: 'Opération', fluide: 'Fluide', etanch: 'Étanchéité', photos: 'Photos' };
+var MES_STEP_LABELS = { equip: 'Équipement', op: 'Opération', fluide: 'Fluide', etanch: 'Étanchéité', comment: 'Commentaire', photos: 'Photos' };
 
 function isoToFr(iso) { var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; }
 function frToIso(fr) { var m = String(fr || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return m ? m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2) : ''; }
@@ -721,8 +723,8 @@ function newMesState(addOnly) {
 
 function mesSteps() {
   var m = S.mes, s = ['equip', 'op'];
-  if (m.d.op !== 'mes') s.push('fluide', 'etanch');   // tant que l'opération n'est pas choisie, on montre les 5 étapes
-  s.push('photos');
+  if (m.d.op !== 'mes') s.push('fluide', 'etanch');   // tant que l'opération n'est pas choisie, on montre toutes les étapes
+  s.push('comment', 'photos');
   return s;
 }
 
@@ -877,7 +879,7 @@ V.mes = function () {
   if (m.saving) return '<div class="card center" style="padding:40px 16px"><div class="spin" style="margin:0 auto"></div><b>' + esc(m.saving) + '</b><div class="note">Garde l’appli ouverte jusqu’à la fin.</div></div>';
   var h = '<div class="steps">' + steps.map(function (s, i) {
     return '<div class="st' + (i <= m.step ? ' on' : '') + (i === m.step ? ' cur' : '') + '"><i></i><span>' + MES_STEP_LABELS[s] + '</span></div>';
-  }).join('') + '</div>' + msgBox();
+  }).join('') + '</div><div class="stepname">Étape ' + (m.step + 1) + ' sur ' + steps.length + ' · <b>' + MES_STEP_LABELS[key] + '</b></div>' + msgBox();
   h += '<div class="note"><b style="color:var(--ink)">' + esc(c.client) + '</b> · ' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'machine à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</div>';
 
   if (key === 'equip') {
@@ -957,7 +959,11 @@ V.mes = function () {
         return field('Fuite ' + (i + 1) + ' : localisation', 'mes.d.fuites.' + i + '.loc', { ph: i === 0 ? 'Ex. raccord flare de l’UE' : '' }) + chips([['realisee', 'Réparation réalisée'], ['afaire', 'Réparation à faire']], f.rep, 'setRep' + i);
       }).join('') + '</div>';
     }
-    h += '<div class="card"><label>Observations (facultatif)<textarea rows="3" data-bind="mes.d.observations">' + esc(d.observations) + '</textarea></label></div>';
+  }
+
+  if (key === 'comment') {
+    h += '<div class="sec">Commentaire</div><div class="card"><label>Commentaire (facultatif)<textarea rows="6" data-bind="mes.d.observations" placeholder="Ce qu’il y a à dire en plus : remarques sur l’installation, consignes données au client, travaux à prévoir…">' + esc(d.observations) + '</textarea></label>' +
+      '<div class="note">' + (d.op === 'mes' ? 'Repris dans le rapport d’installation.' : 'Repris dans les observations du CERFA' + (m.add ? '.' : ' et dans le rapport d’installation.')) + ' Tu peux le laisser vide.</div></div>';
   }
 
   if (key === 'photos') {

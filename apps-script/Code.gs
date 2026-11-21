@@ -1068,7 +1068,8 @@ function saveManip_(d, user) {
     // En-tête de la mise en service (créé à la première opération)
     if (!row) {
       var rec = { 'ID': nextId_(mt.rows.concat(ss_().getSheetByName(MES.trashMes) ? readTable_(MES.trashMes).rows : []), 'M', 'ID'), 'ID chantier': c.id, 'Date': date,
-        'Opérateur ID': user.id, 'Opérateur': opNom, 'N° série UE': d.serieUE || '', 'N° série UI': d.serieUI || '', 'Photos': '[]', 'Créée le': now };
+        'Opérateur ID': user.id, 'Opérateur': opNom, 'N° série UE': d.serieUE || '', 'N° série UI': d.serieUI || '', 'Photos': '[]', 'Créée le': now,
+        'Commentaire rapport': String(d.observations || '').trim().slice(0, 3000) };   // commentaire de l'étape Commentaire, repris dans le rapport
       writeRow_(mt, rec, null);
       mt = readTable_(MES.sheet);
       row = mt.rows.filter(function (r) { return String(r['ID chantier']) === c.id; })[0];
