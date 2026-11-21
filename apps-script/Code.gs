@@ -421,17 +421,28 @@ var CH_FIELDS = {
   commentaires: 'Commentaires'
 };
 
-function chantierFromRow_(r) {
+function gwpMap_() {
+  var m = {};
+  try { listFluides_().forEach(function (f) { if (f.gwp) m[normFluide_(f.code)] = f.gwp; }); } catch (e) {}
+  return m;
+}
+function normFluide_(s) { return String(s || '').toUpperCase().replace(/\s+/g, '').replace(/^R-?/, 'R'); }
+
+function chantierFromRow_(r, gwps) {
   var o = {};
   Object.keys(CH_FIELDS).forEach(function (k) { o[k] = r[CH_FIELDS[k]] === undefined ? '' : String(r[CH_FIELDS[k]]); });
-  o.gwp = r['GWP'] === '' || r['GWP'] === 'saisir' ? '' : String(r['GWP']);
+  var g = r['GWP'];
+  // Ancienne formule en erreur (#ERROR!, #N/A…) ou vide : on reprend la valeur de l'onglet Fluides
+  if (g === '' || g === 'saisir' || /^#/.test(String(g)) || !isFinite(Number(g))) g = (gwps || gwpMap_())[normFluide_(o.fluide)] || '';
+  o.gwp = g === '' ? '' : String(g);
   o.client = (o.prenom ? o.prenom + ' ' : '') + o.nom;
   o.misEnService = !!o.dateMes;
   return o;
 }
 
 function listChantiers_() {
-  return readTable_(SH.chantiers).rows.map(chantierFromRow_).reverse();
+  var gwps = gwpMap_();
+  return readTable_(SH.chantiers).rows.map(function (r) { return chantierFromRow_(r, gwps); }).reverse();
 }
 
 function getChantier_(id) {
@@ -452,17 +463,12 @@ function saveChantier_(d) {
     Object.keys(CH_FIELDS).forEach(function (k) { if (k !== 'id' && d[k] !== undefined) rec[CH_FIELDS[k]] = d[k]; });
     if (!row) rec['ID'] = nextId_(t.rows, 'C', 'ID');
     var r = writeRow_(t, rec, row ? row._row : null);
-    // GWP : valeur saisie à la main si fournie, sinon formule qui lit l'onglet Fluides
+    // GWP : valeur saisie à la main si fournie, sinon valeur de l'onglet Fluides (écrite en nombre, sans formule)
     var gwpCol = t.headers.indexOf('GWP') + 1;
-    var fluideCol = t.headers.indexOf('Fluide') + 1;
-    if (gwpCol > 0 && fluideCol > 0) {
+    if (gwpCol > 0) {
       var manual = Number(String(d.gwpManuel || '').replace(',', '.'));
-      if (d.gwpManuel && isFinite(manual)) {
-        t.sh.getRange(r, gwpCol).setValue(manual);
-      } else {
-        var L = columnLetter_(fluideCol);
-        t.sh.getRange(r, gwpCol).setFormula('=IF(' + L + r + '="","",IFERROR(INDEX(Fluides!$B$2:$B$100,MATCH(' + L + r + ',Fluides!$A$2:$A$100,0)),"saisir"))');
-      }
+      var gwp = d.gwpManuel && isFinite(manual) ? manual : (gwpMap_()[normFluide_(d.fluide)] || '');
+      t.sh.getRange(r, gwpCol).setValue(gwp);
     }
     SpreadsheetApp.flush();
     var id = row ? d.id : rec['ID'];
