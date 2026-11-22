@@ -1,6 +1,6 @@
 // Service worker minimal : rend l'appli installable et garde l'écran de démarrage en cache.
 // Les données de l'appli ne sont jamais mises en cache (elles viennent toujours de Google).
-var CACHE = 'are-fluides-v1';
+var CACHE = 'are-fluides-v2';
 var SHELL = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './favicon.png'];
 
 self.addEventListener('install', function (e) {

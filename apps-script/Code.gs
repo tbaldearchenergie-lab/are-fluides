@@ -1595,11 +1595,12 @@ function uploadAttestation_(user, d) {
 }
 
 function profileSummary_(user) {
-  var out = { annee: new Date().getFullYear() - 1 };
-  if (user.role !== 'admin') return out;
   var det = listDetecteurs_();
+  var out = { annee: new Date().getFullYear() - 1, detecteursAFaire: det.filter(function (x) { return !x.ok; }).length,
+    bouteillesSansTare: boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim() && !/rendu/i.test(String(r['Statut'] || '')) && !isFinite(num_(r['Poids à vide (kg)'])); }).length };
+  if (user.role !== 'admin') return out;
   out.comptes = readTable_(SH.ops).rows.length;
-  out.detecteurs = det.length; out.detecteursAFaire = det.filter(function (x) { return !x.ok; }).length;
+  out.detecteurs = det.length;
   out.distributeurs = distributeurs_().length;
   return out;
 }
