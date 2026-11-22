@@ -1382,7 +1382,7 @@ function bouteilleFromRow_(r, dists) {
   var kind = boutKind_(r['Type']), rendue = /rendu/i.test(String(r['Statut'] || ''));
   var dist = (dists || []).filter(function (x) { return x.id === String(r['Distributeur (ID)'] || ''); })[0];
   return {
-    ref: String(r['Réf bouteille']).trim(), kind: kind, type: BOUT_TYPES[kind], fluide: normFluide_(r['Fluide']),
+    ref: String(r['Réf bouteille']).trim(), numero: boutNumero_(r['Réf bouteille']), kind: kind, type: BOUT_TYPES[kind], fluide: normFluide_(r['Fluide']),
     vide: fr_(vide, 2), plein: kind === 'neuve' ? fr_(plein, 2) : '', initial: kind === 'neuve' && isFinite(plein) && isFinite(vide) ? fr_(plein - vide, 2) : '',
     pesee: fr_(pesee, 2), reste: isFinite(vide) && isFinite(pesee) ? fr_(Math.max(0, pesee - vide), 2) : '',
     resteN: isFinite(vide) && isFinite(pesee) ? Math.max(0, pesee - vide) : 0,
@@ -1395,7 +1395,12 @@ function bouteilleFromRow_(r, dists) {
 function listBouteilles_() {
   var dists = distributeurs_();
   var list = boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); }).map(function (r) { return bouteilleFromRow_(r, dists); });
-  var sum = function (f) { return fr_(list.filter(f).reduce(function (a, b) { return a + b.resteN; }, 0), 2); };
+  // Totaux au dépôt par fluide : [{ fluide, kg }]
+  var sum = function (f) {
+    var by = {};
+    list.filter(f).forEach(function (b) { if (b.resteN > 0) { var k = b.fluide || '?'; by[k] = (by[k] || 0) + b.resteN; } });
+    return Object.keys(by).sort().map(function (k) { return { fluide: k === '?' ? 'fluide non renseigné' : k, kg: fr_(by[k], 2) }; });
+  };
   var fournisseurs = {};
   list.forEach(function (b) { if (b.fournisseur) fournisseurs[b.fournisseur] = 1; });
   return {
@@ -1432,12 +1437,27 @@ function bouteilleDetail_(d) {
 }
 
 /** Ajout (achat ou bouteille déjà en stock) ou modification des caractéristiques d'une bouteille. Admin. */
+/** Numéro d'une bouteille sans son préfixe (RECUP_, TRANS_, R32_…). */
+function boutNumero_(ref) { return String(ref || '').trim().replace(/^(RECUP|TRANS|R\d+[A-Z]?)_?(?=[0-9A-Z])/i, ''); }
+/** Référence composée : RECUP_numéro, TRANS_numéro, ou fluide_numéro pour une neuve (R32_03482). */
+function boutRef_(kind, fluide, numero) {
+  var n = boutNumero_(String(numero || '').replace(/\s+/g, '')).toUpperCase();
+  if (!n) return '';
+  return (kind === 'neuve' ? String(fluide || '').toUpperCase() : kind === 'transfert' ? 'TRANS' : 'RECUP') + '_' + n;
+}
+
 function saveBouteille_(d, user) {
-  var ref = String(d.ref || '').trim();
-  if (!ref) throw new Error('Indique la référence de la bouteille.');
   var kind = BOUT_TYPES[d.kind] ? d.kind : '';
   if (!kind) throw new Error('Choisis le type de bouteille.');
   var fluide = normFluide_(d.fluide);
+  if (kind === 'neuve' && !fluide) throw new Error('Choisis le fluide de la bouteille neuve.');
+  var ref = d.numero !== undefined ? boutRef_(kind, fluide, d.numero) : String(d.ref || '').trim();
+  if (!ref) throw new Error('Indique le numéro de la bouteille.');
+  if (d.original && d.numero !== undefined) {
+    // Bouteille existante dont ni le numéro, ni le type, ni le fluide (neuve) ne changent : on garde sa référence telle quelle
+    var o = findBout_(d.original).row;
+    if (o && boutNumero_(d.original).toUpperCase() === boutNumero_(String(d.numero).replace(/\s+/g, '')).toUpperCase() && boutKind_(o['Type']) === kind && (kind !== 'neuve' || normFluide_(o['Fluide']) === fluide)) ref = String(d.original).trim();
+  }
   var vide = num_(d.vide), plein = num_(d.plein), pesee = num_(d.pesee);
   if (!isFinite(vide) || vide <= 0) throw new Error('Indique le poids à vide (tare) de la bouteille.');
   if (kind === 'neuve') {
@@ -1455,7 +1475,7 @@ function saveBouteille_(d, user) {
     if (d.original && ref.toLowerCase() !== String(d.original).trim().toLowerCase()) {
       if (findBout_(ref).row) throw new Error('Une bouteille porte déjà cette référence.');
       var used = readTable_(SH.mouv).rows.some(function (r) { return String(r['Bouteille'] || '').trim().toLowerCase() === String(d.original).trim().toLowerCase(); });
-      if (used) throw new Error('Cette bouteille figure déjà dans le registre : sa référence ne peut plus changer.');
+      if (used) throw new Error('Cette bouteille figure déjà dans le registre : son numéro, son type et son fluide ne peuvent plus changer.');
     }
     var rec = {
       'Réf bouteille': ref, 'Type': BOUT_TYPES[kind], 'Fluide': fluide, 'Poids à vide (kg)': vide,

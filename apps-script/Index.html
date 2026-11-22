@@ -467,11 +467,7 @@ var V = {
     var h = '<div class="note" style="font-size:15px">Bonjour ' + esc(S.user.prenom) + '</div>' + msgBox() + attBanner();
     h += '<button class="btn" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Chantiers</div>';
-    h += '<div class="years" id="years" role="radiogroup" aria-label="Année des chantiers">' +
-      [['', 'Toutes', S.chantiers.length]].concat(Object.keys(annees).sort().map(function (y) { return [y, y, annees[y]]; })).map(function (y) {
-        return '<button type="button" role="radio" aria-checked="' + (y[0] === S.annee) + '" class="yr' + (y[0] === S.annee ? ' on' : '') + '" data-act="setAnnee" data-arg="' + y[0] + '">' +
-          '<span class="y">' + y[1] + '</span><span class="n">' + y[2] + ' chantier' + (y[2] > 1 ? 's' : '') + '</span></button>';
-      }).join('') + '</div>';
+    h += yearStrip(annees, S.chantiers.length, S.annee, 'setAnnee', 'chantier', 'Année des chantiers');
     h += chips([['0', 'Tous (' + inYear.length + ')'], ['1', 'Mes chantiers (' + mineCount + ')'], ['2', 'Mes chantiers à mettre en service (' + todoCount + ')']], S.mine || '0', 'setMine');
     h += '<div class="search">' + ICON.search + '<input type="search" aria-label="Rechercher un chantier" placeholder="Client, ville, n° projet, machine…" data-bind="search" data-live="1" value="' + esc(S.search) + '"></div>';
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
@@ -1238,22 +1234,32 @@ function render() {
   document.getElementById('app').innerHTML = html;
   if (focused) { var el = document.querySelector('[data-bind="' + focused + '"]'); if (el) { el.focus(); try { var n = el.value.length; el.setSelectionRange(n, n); } catch (e) {} } }
   if (scr === 'mes') initSig();
-  if (scr === 'home') initYears();
+  initYears();
 }
 
-// Bandeau des années : on fait défiler avec le doigt, l'année arrêtée au centre est sélectionnée
+// Bandeau des années : années dans l'ordre, puis « Toutes » à droite de l'année en cours
+function yearStrip(counts, total, sel, act, unit, aria) {
+  var items = Object.keys(counts).sort().map(function (y) { return [y, y, counts[y]]; }).concat([['', 'Toutes', total]]);
+  return '<div class="years" id="years" role="radiogroup" aria-label="' + esc(aria) + '" data-sel="' + esc(act) + '">' + items.map(function (y) {
+    return '<button type="button" role="radio" aria-checked="' + (y[0] === sel) + '" class="yr' + (y[0] === sel ? ' on' : '') + '" data-act="' + act + '" data-arg="' + y[0] + '">' +
+      '<span class="y">' + y[1] + '</span><span class="n">' + y[2] + ' ' + unit + (y[2] > 1 ? 's' : '') + '</span></button>';
+  }).join('') + '</div>';
+}
+// On fait défiler avec le doigt, l'année arrêtée au centre est sélectionnée
 function initYears() {
   var box = document.getElementById('years'); if (!box) return;
+  var act = box.getAttribute('data-sel'), scr0 = S.screen;
   var on = box.querySelector('.yr.on');
   if (on) box.scrollLeft = on.offsetLeft + on.offsetWidth / 2 - box.clientWidth / 2;
   var t = null;
   box.addEventListener('scroll', function () {
     clearTimeout(t);
     t = setTimeout(function () {
-      if (!box.isConnected || S.screen !== 'home') return;
+      if (!box.isConnected || S.screen !== scr0) return;
       var mid = box.scrollLeft + box.clientWidth / 2, best = null, d = 1e9;
       Array.prototype.forEach.call(box.querySelectorAll('.yr'), function (b) { var x = Math.abs(b.offsetLeft + b.offsetWidth / 2 - mid); if (x < d) { d = x; best = b; } });
-      if (best && best.getAttribute('data-arg') !== S.annee) A.setAnnee(best.getAttribute('data-arg'));
+      var cur = box.querySelector('.yr.on');
+      if (best && best !== cur) A[act](best.getAttribute('data-arg'));
     }, 160);
   }, { passive: true });
   // Ordinateur : molette verticale = défilement horizontal, et glisser avec la souris
@@ -1364,16 +1370,30 @@ V.bottles = function () {
   var d = S.bt;
   if (!d) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
   var tab = S.btTab || 'depot', list = d.bouteilles.filter(function (b) { return b.statut === tab; });
+  var yr = function (b) { var m = String(b.dateRetour || '').match(/(\d{4})$/); return m ? m[1] : ''; };
+  var annees = {}, curY = String(new Date().getFullYear());
+  if (tab === 'rendue') {
+    list.forEach(function (b) { var y = yr(b); if (y) annees[y] = (annees[y] || 0) + 1; });
+    if (!annees[curY]) annees[curY] = 0;
+    if (S.btAnnee === undefined) S.btAnnee = curY;
+    var nRendues = list.length;
+    list = list.filter(function (b) { return !S.btAnnee || yr(b) === S.btAnnee; });
+  }
   var order = { neuve: 0, transfert: 1, recup: 2 };
   list.sort(function (a, b) { return tab === 'depot' ? (order[a.kind] - order[b.kind] || a.ref.localeCompare(b.ref)) : (frToIso(b.dateRetour) || '').localeCompare(frToIso(a.dateRetour) || ''); });
   var cnt = function (s) { return d.bouteilles.filter(function (b) { return b.statut === s; }).length; };
-  return msgBox() + '<div class="g2"><div class="card" style="gap:4px"><span class="note">Fluide neuf en stock</span><b style="font-size:22px">' + esc(d.totals.neuf) + ' kg</b></div>' +
-    '<div class="card" style="gap:4px"><span class="note">Fluide récupéré au dépôt</span><b style="font-size:22px">' + esc(d.totals.recup) + ' kg</b></div></div>' +
+  var tot = function (l) {
+    return l.length ? l.map(function (x) { return '<span style="display:flex;align-items:baseline;justify-content:space-between;gap:8px"><b style="font-size:20px">' + esc(x.kg) + ' kg</b><span class="badge grey">' + esc(x.fluide) + '</span></span>'; }).join('')
+      : '<b style="font-size:20px">0 kg</b>';
+  };
+  return msgBox() + '<div class="g2" style="align-items:start"><div class="card" style="gap:6px"><span class="note">Fluide neuf en stock</span>' + tot(d.totals.neuf) + '</div>' +
+    '<div class="card" style="gap:6px"><span class="note">Fluide récupéré au dépôt</span>' + tot(d.totals.recup) + '</div></div>' +
     (isAdmin() ? '<button class="btn" data-act="newBottle">' + ICON.plus + 'Ajouter une bouteille</button>' : '') +
     '<div class="g2">' + [['depot', 'Au dépôt'], ['rendue', 'Rendues']].map(function (t) {
       return '<button type="button" class="btn ' + (tab === t[0] ? 'dark' : 'out') + '" style="min-height:46px" data-act="btTab" data-arg="' + t[0] + '">' + t[1] + ' (' + cnt(t[0]) + ')</button>';
     }).join('') + '</div>' +
-    (list.length ? list.map(bottleItem).join('') : '<div class="note center">Aucune bouteille dans cette liste.</div>') +
+    (tab === 'rendue' ? yearStrip(annees, nRendues, S.btAnnee, 'btAnnee', 'bouteille', 'Année de retour') : '') +
+    (list.length ? list.map(bottleItem).join('') : '<div class="note center">Aucune bouteille ' + (tab === 'rendue' && S.btAnnee ? 'rendue en ' + esc(S.btAnnee) : 'dans cette liste') + '.</div>') +
     '<div class="note">Fluide restant = dernière pesée moins poids à vide, mis à jour à chaque manipulation. Touche une bouteille pour voir sa fiche.' + (isAdmin() ? '' : ' Les bouteilles sont ajoutées et rendues par l’administrateur.') + '</div>';
 };
 
@@ -1424,14 +1444,20 @@ V.bottle = function () {
   return h;
 };
 
+function bfRef() {
+  var f = S.bf, n = String(f.numero || '').replace(/\s+/g, '').replace(/^(RECUP|TRANS|R\d+[A-Z]?)_?(?=[0-9A-Z])/i, '').toUpperCase();
+  if (!n) return '';
+  return (f.kind === 'neuve' ? (f.fluide || 'FLUIDE').toUpperCase() : f.kind === 'transfert' ? 'TRANS' : 'RECUP') + '_' + n;
+}
 function bfInitial() { var f = S.bf, x = numOrNaN(f.plein) - numOrNaN(f.vide); return isFinite(x) && x > 0 ? frNum(x) + ' kg' : '—'; }
 V.bottleForm = function () {
   var f = S.bf, neuve = f.kind === 'neuve';
   var fl = (S.bt && S.bt.fluides.length ? S.bt.fluides : MAIN_FLUIDS);
-  return msgBox() + '<div class="card">' + field('Référence de la bouteille *', 'bf.ref', { ph: 'Ex. R32_03482' }) +
-    '<div class="note">Type de bouteille</div>' + chips(KINDS, f.kind, 'setBfKind') +
-    '<label>Fluide' + (neuve ? ' *' : '') + '<select data-bind="bf.fluide"><option value="">' + (neuve ? 'Choisir…' : 'Pas encore de fluide (bouteille vide)') + '</option>' +
+  return msgBox() + '<div class="card"><div class="note">Type de bouteille</div>' + chips(KINDS, f.kind, 'setBfKind') +
+    '<label>Fluide' + (neuve ? ' *' : '') + '<select data-bind="bf.fluide" data-rerender="1"><option value="">' + (neuve ? 'Choisir…' : 'Pas encore de fluide (bouteille vide)') + '</option>' +
     fl.map(function (c) { return '<option value="' + esc(c) + '"' + (c === f.fluide ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select></label>' +
+    field('Numéro de la bouteille *', 'bf.numero', { ph: 'Numéro gravé ou étiqueté sur la bouteille' }) +
+    '<div class="rows" style="padding:0 4px"><div class="row"><span>Nom dans l’appli</span><span id="bfRef" style="font-weight:700">' + esc(bfRef() || '—') + '</span></div></div>' +
     '<div class="g2">' + field('Poids à vide (kg) *', 'bf.vide', { mode: 'decimal', ph: 'Tare' }) + (neuve ? field('Poids plein à l’achat (kg) *', 'bf.plein', { mode: 'decimal' }) : '<span></span>') + '</div>' +
     (neuve ? '<div class="rows" style="padding:0 4px"><div class="row"><span>Poids initial du fluide</span><span id="bfInit">' + bfInitial() + '</span></div></div>' : '') +
     field(f.original ? 'Dernière pesée (kg)' : 'Pesée actuelle (kg), si la bouteille a déjà servi', 'bf.pesee', { mode: 'decimal', ph: neuve ? 'Vide = bouteille pleine' : 'Vide = bouteille vide' }) +
@@ -1533,16 +1559,17 @@ Object.assign(A, {
   },
   goBottles: function () { S.stack = []; S.screen = 'bottles'; S.msg = null; S.btTab = S.btTab || 'depot'; render(); window.scrollTo(0, 0); loadBottles(); },
   btTab: function (t) { S.btTab = t; render(); },
+  btAnnee: function (v) { v = v || ''; if (v === S.btAnnee) return; S.btAnnee = v; render(); },
   openBottle: function (ref) { go('bottle'); openBottleDetail(ref); },
-  newBottle: function () { S.bf = { original: '', ref: '', kind: 'neuve', fluide: 'R32', vide: '', plein: '', pesee: '', fournisseur: '', dateEntree: todayIso() }; go('bottleForm'); },
+  newBottle: function () { S.bf = { original: '', numero: '', kind: 'neuve', fluide: 'R32', vide: '', plein: '', pesee: '', fournisseur: '', dateEntree: todayIso() }; go('bottleForm'); },
   editBottle: function () {
     var b = S.btD;
-    S.bf = { original: b.ref, ref: b.ref, kind: b.kind, fluide: b.fluide, vide: b.vide, plein: b.plein, pesee: '', fournisseur: b.fournisseur, dateEntree: frToIso(b.dateEntree) };
+    S.bf = { original: b.ref, numero: b.numero, kind: b.kind, fluide: b.fluide, vide: b.vide, plein: b.plein, pesee: '', fournisseur: b.fournisseur, dateEntree: frToIso(b.dateEntree) };
     go('bottleForm');
   },
   setBfKind: function (k) { S.bf.kind = k; render(); },
   saveBottle: function () {
-    var f = S.bf, d = { original: f.original, ref: f.ref, kind: f.kind, fluide: f.fluide, vide: f.vide, plein: f.kind === 'neuve' ? f.plein : '', pesee: f.pesee, fournisseur: f.fournisseur, dateEntree: isoToFr(f.dateEntree) };
+    var f = S.bf, d = { original: f.original, numero: f.numero, kind: f.kind, fluide: f.fluide, vide: f.vide, plein: f.kind === 'neuve' ? f.plein : '', pesee: f.pesee, fournisseur: f.fournisseur, dateEntree: isoToFr(f.dateEntree) };
     run(call('saveBouteille', d), f.original ? 'Bouteille modifiée.' : 'Bouteille ajoutée au dépôt.').then(function (b) {
       setBottle(b); S.screen = 'bottle'; if (!f.original) { S.stack = ['bottles']; } render(); window.scrollTo(0, 0);
       call('listBouteilles').then(function (x) { S.bt = x; }).catch(function () {});
@@ -1613,6 +1640,7 @@ document.addEventListener('change', function (e) {
 document.addEventListener('input', function (e) {
   var p = e.target.getAttribute && e.target.getAttribute('data-bind');
   if (p === 'bf.vide' || p === 'bf.plein') { setPath(p, e.target.value); var el = document.getElementById('bfInit'); if (el) el.textContent = bfInitial(); }
+  if (p === 'bf.numero') { setPath(p, e.target.value); var r = document.getElementById('bfRef'); if (r) r.textContent = bfRef() || '—'; }
 });
 
 /* ============================== Événements ============================== */
