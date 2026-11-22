@@ -320,6 +320,73 @@ function machineHint(f) {
     (manque.length ? '<br>' + esc(manque.join(' et ')) + ' : voir la notice d’installation.' : '') +
     (m.remarque ? '<br><span style="font-size:13px">' + esc(m.remarque) + '</span>' : '') + '</div>';
 }
+/* ---------- Base machines : nouveau modèle, modèle proche, ou données différentes de la base */
+function levenshtein(a, b) {
+  if (Math.abs(a.length - b.length) > 3) return 9;
+  var prev = [], cur, i, j;
+  for (j = 0; j <= b.length; j++) prev[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    cur = [i];
+    for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function similarMachines(modele, marque) {
+  var k = normModele(modele);
+  if (k.length < 4) return [];
+  return S.machines.map(function (m) {
+    var n = normModele(m.modele), d = levenshtein(k, n);
+    if (n.length >= 5 && k.length >= 5 && (n.indexOf(k) === 0 || k.indexOf(n) === 0)) d = Math.min(d, 1);
+    if (marque && m.marque.toLowerCase() !== String(marque).toLowerCase()) d += 1;
+    return { m: m, d: d };
+  }).filter(function (x) { return x.d <= 2; }).sort(function (a, b) { return a.d - b.d; }).slice(0, 3).map(function (x) { return x.m; });
+}
+var MACH_CMP = [['fluide', 'Fluide', ''], ['chargeUsine', 'Charge usine', 'kg', 'charge'], ['precharge', 'Longueur préchargée', 'm', 'precharge'], ['gpm', 'Charge supplémentaire', 'g/m', 'gpm']];
+function machineCheck(f) {
+  var marque = brandMatch(f.marque) || String(f.marque || '').trim(), modele = String(f.modele || '').trim();
+  if (!modele || !marque || !S.machines.length) return null;
+  var m = findMachine(modele);
+  if (!m) { var sim = similarMachines(modele, marque); return { kind: sim.length ? 'similar' : 'new', sim: sim }; }
+  var hydro = m.liaison && !/frigo/i.test(m.liaison), diffs = [];
+  MACH_CMP.forEach(function (c) {
+    if (hydro && (c[0] === 'precharge' || c[0] === 'gpm')) return;
+    var saisi = c[0] === 'fluide' ? formFluid(f) : String(f[c[0]] || '').trim(), base = c[0] === 'fluide' ? m.fluide : m[c[3]];
+    if (!saisi) return;
+    var same = c[0] === 'fluide' ? saisi.toUpperCase() === String(base || '').toUpperCase() : (base !== '' && Math.abs(num(saisi) - num(base)) < 1e-6);
+    if (!same) diffs.push({ label: c[1], unit: c[2], base: base, saisi: saisi });
+  });
+  return diffs.length ? { kind: 'diff', m: m, diffs: diffs, complete: diffs.every(function (x) { return x.base === ''; }) } : null;
+}
+function machAction(f, chk) {
+  if (!chk) return '';
+  if (f._machAction !== undefined && f._machKey === chk.kind + '|' + normModele(f.modele)) return f._machAction;
+  return chk.kind === 'diff' ? (chk.complete ? 'update' : '') : chk.kind === 'new' ? 'add' : '';   // modèle proche : rien d'ajouté sans confirmation
+}
+function machBox(f) {
+  var chk = machineCheck(f);
+  if (!chk) return '';
+  var act = machAction(f, chk), u = function (x) { return esc(x.saisi + (x.unit ? ' ' + x.unit : '')); };
+  if (chk.kind === 'diff') {
+    var verbe = chk.complete ? 'Compléter' : 'Mettre à jour';
+    return '<div class="sec">Base machines</div><div class="card"><div class="msg ' + (chk.complete ? 'info' : 'err') + '" style="margin:0">' +
+      (chk.complete ? 'Ces données manquent dans la base pour ' : 'Ces données sont différentes de la base pour ') + esc(chk.m.modele) + ' :<br>' +
+      chk.diffs.map(function (x) { return '· ' + esc(x.label) + ' : ' + u(x) + (x.base === '' ? ' (vide dans la base)' : ' au lieu de ' + esc(x.base + (x.unit ? ' ' + x.unit : ''))); }).join('<br>') +
+      (chk.complete ? '' : '<br>Es-tu sûr de ces valeurs ?') + '</div>' +
+      chips([['update', verbe + ' la base'], ['', 'Seulement pour ce chantier']], act, 'machAct') +
+      (isAdmin() ? '' : '<div class="note">' + verbe + ' la base envoie une proposition : l’administrateur la valide dans l’onglet Machines.</div>') + '</div>';
+  }
+  var h = '<div class="sec">Base machines</div><div class="card"><div class="msg info" style="margin:0">« ' + esc(f.modele) + ' » n’est pas dans la base machines.' +
+    (chk.sim.length ? ' Est-ce plutôt l’un de ces modèles ?' : '') + '</div>';
+  if (chk.sim.length) h += '<div class="chips">' + chk.sim.map(function (m) {
+    return '<button type="button" class="chip" data-act="pickSimilar" data-arg="' + esc(m.modele) + '" style="height:auto;padding:8px 14px;border-radius:12px;text-align:left">Utiliser ' + esc(m.modele) + '<br><span style="font-weight:400;font-size:13px">' + esc([m.marque, m.gamme].filter(Boolean).join(' · ')) + '</span></button>';
+  }).join('') + '</div>' + '<div class="note">Sinon, c’est bien « ' + esc(f.modele) + ' » :</div>';
+  return h + chips([['add', chk.sim.length ? 'C’est bien « ' + f.modele + ' » : l’ajouter' : 'Ajouter à la base machines'], ['', 'Ne pas l’ajouter']], act, 'machAct') +
+    '<div class="note">Il sera ajouté avec le fluide, la charge usine, la précharge et le g/m de ce chantier' + (isAdmin() ? '.' : ', puis vérifié par l’administrateur.') + '</div></div>';
+}
+var MACH_HTML = '';
+// Ne remplace l'encadré que si son contenu change : sinon un clic sur une proposition serait perdu (le champ perd le focus juste avant)
+function refreshMachBox() { var el = document.getElementById('machBox'); if (!el || !S.form) return; var h = machBox(S.form); if (h !== MACH_HTML) { MACH_HTML = h; el.innerHTML = h; } }
 function formFluid(f) { return f.fluideChoix === 'Autre' ? (f.fluideAutre || '').trim() : f.fluideChoix; }
 
 /* ============================== Actions ============================== */
@@ -341,6 +408,8 @@ var A = {
     render();
   },
   pickSugg: function (mod) { var m = findMachine(mod); if (m) applyMachine(S.form, m); render(); },
+  pickSimilar: function (mod) { var m = findMachine(mod); if (m) applyMachine(S.form, m); S.msg = { text: 'Modèle ' + mod + ' choisi : ses données ont été reprises de la base.' }; render(); },
+  machAct: function (v) { var f = S.form, chk = machineCheck(f); f._machAction = v; f._machKey = chk ? chk.kind + '|' + normModele(f.modele) : ''; refreshMachBox(); },
   pickReleve: function () { var i = document.getElementById('releveInput'); if (i) i.click(); },
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
@@ -358,9 +427,11 @@ var A = {
     var data = {
       id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville,
       marque: brandMatch(f.marque) || f.marque, modele: f.modele, chargeUsine: f.chargeUsine, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
-      fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires
+      fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires,
+      machine: machAction(f, machineCheck(f))
     };
     run(call('saveChantier', data), f.id ? 'Fiche chantier enregistrée.' : 'Chantier créé.').then(function (c) {
+      if (c.machineMsg) { S.msg = { text: S.msg.text + ' ' + c.machineMsg }; call('listMachines').then(function (l) { S.machines = l || S.machines; }).catch(function () {}); }
       S.cur = c; S.stack = [listScreen()]; S.screen = 'chantier'; S.ctx = null; loadMes().catch(function () {});
       call('listChantiers').then(function (l) { S.chantiers = l; });
       render();
@@ -476,6 +547,7 @@ var V = {
     var h = '<div style="font-size:22px;font-weight:700">Bonjour ' + esc(u.prenom) + '</div>' + msgBox() + attBanner();
     if (sm.detecteursAFaire) h += '<button class="msg err" data-act="' + (isAdmin() ? 'goDetecteurs' : 'goProfile') + '" style="border:0;text-align:left;width:100%;cursor:pointer">' +
       sm.detecteursAFaire + ' détecteur' + (sm.detecteursAFaire > 1 ? 's' : '') + ' de fuite à faire contrôler' + (isAdmin() ? ' →' : ' : préviens l’administrateur.') + '</button>';
+    if (sm.machinesAVerifier) h += '<div class="msg info">' + sm.machinesAVerifier + ' machine' + (sm.machinesAVerifier > 1 ? 's' : '') + ' à vérifier dans l’onglet Machines du Google Sheets (colonne « À vérifier » : ajouts et propositions des opérateurs). Vide la case une fois validé.</div>';
     if (sm.bouteillesSansTare && isAdmin()) h += '<button class="msg info" data-act="goBottles" style="border:0;text-align:left;width:100%;cursor:pointer">' + sm.bouteillesSansTare + ' bouteille' + (sm.bouteillesSansTare > 1 ? 's' : '') + ' sans poids à vide : les pesées ne peuvent pas être calculées →</button>';
     h += '<button class="btn lime" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Mes chantiers à mettre en service' + (S.loaded ? ' (' + mine.length + ')' : '') + '</div>';
@@ -568,6 +640,7 @@ var V = {
       '<div id="longAlert">' + longueurAlerte(f, mSel) + '</div></div>' +
       '<div class="sec">Commentaires</div><div class="card">' +
       '<label>Commentaires<textarea rows="3" data-bind="form.commentaires">' + esc(f.commentaires) + '</textarea></label></div>' +
+      '<div id="machBox">' + (MACH_HTML = machBox(f)) + '</div>' +
       '<button class="btn" data-act="saveChantier"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le chantier') + '</button>';
   },
 
@@ -1673,6 +1746,7 @@ document.addEventListener('input', function (e) {
   var p = e.target.getAttribute && e.target.getAttribute('data-bind');
   if (p === 'bf.vide' || p === 'bf.plein') { setPath(p, e.target.value); var el = document.getElementById('bfInit'); if (el) el.textContent = bfInitial(); }
   if (p === 'bf.numero') { setPath(p, e.target.value); var r = document.getElementById('bfRef'); if (r) r.textContent = bfRef() || '—'; }
+  if (/^form\.(modele|marque|chargeUsine|precharge|gpm|fluideAutre)$/.test(p || '')) { setPath(p, e.target.value); refreshMachBox(); }
 });
 
 /* ============================== Événements ============================== */
@@ -1763,7 +1837,7 @@ document.addEventListener('change', function (e) {
     if (f2._modeleAutre) f2.modele = ''; else { f2.modele = el.value; var mm = findMachine(el.value); if (mm) applyMachine(f2, mm); }
     render(); return;
   }
-  if (p === 'form.modele') { var m = findMachine(el.value); if (m) applyMachine(S.form, m); render(); return; }
+  if (p === 'form.modele') { var m = findMachine(el.value); if (m) { applyMachine(S.form, m); render(); } else refreshMachBox(); return; }   // pas de re-rendu : un clic sur une proposition doit passer
   if (p === 'mes.d.bouteille') { var bb = S.ctx.bouteilles.filter(function (x) { return x.ref === el.value; })[0]; if (bb && bb.pesee && !S.mes.d.poidsAvant) S.mes.d.poidsAvant = bb.pesee; render(); return; }
   if (p.indexOf('mes.d.') === 0) { updateLive(p); return; }
   if (el.getAttribute('data-rerender') || p === 'form.fluideAutre') render();

@@ -514,8 +514,69 @@ function saveChantier_(d, user) {
     }
     SpreadsheetApp.flush();
     var id = row ? d.id : rec['ID'];
-    return getChantier_(id);
+    var out = getChantier_(id);
   } finally { lock.releaseLock(); }
+  // Base machines : ajout d'un nouveau modèle ou mise à jour de ses données, si l'opérateur l'a choisi
+  if (d.machine === 'add' || d.machine === 'update') {
+    try { out.machineMsg = upsertMachine_(d, user, id); } catch (e) { out.machineMsg = 'Base machines non mise à jour : ' + e.message; }
+  }
+  return out;
+}
+
+/* ---------- Base machines alimentée depuis l'appli */
+
+var MACH_COLS = ['Marque', 'Modèle', 'Type d’appareil', 'Gamme', 'Type d’installation', 'Alimentation', 'Liaisons', 'Fluide', 'Charge usine (kg)',
+  'Longueur préchargée (m)', 'Charge supplémentaire (g/m)', 'Longueur max UE-UI (m)', 'Source', 'Remarque'];
+var MACH_DATA = [['fluide', 'Fluide', 'fluide'], ['chargeUsine', 'Charge usine (kg)', 'charge usine', 'kg'], ['precharge', 'Longueur préchargée (m)', 'longueur préchargée', 'm'], ['gpm', 'Charge supplémentaire (g/m)', 'charge supplémentaire', 'g/m']];
+
+/** Ajoute le modèle à l'onglet Machines, ou met à jour ses données. L'admin écrit directement ; un opérateur ajoute un modèle
+ *  (marqué « à vérifier ») ou propose une modification, que l'admin valide dans l'onglet Machines. */
+function upsertMachine_(d, user, chantierId) {
+  var modele = String(d.modele || '').trim(), marque = String(d.marque || '').trim();
+  if (!modele || !marque) return '';
+  ensureSheet_(SH.machines, MACH_COLS);
+  ensureColumn_(SH.machines, 'Source'); ensureColumn_(SH.machines, 'À vérifier');
+  var t = readTable_(SH.machines), k = normModele_(modele);
+  var row = t.rows.filter(function (r) { return normModele_(r['Modèle'] || r['Modèle UE']) === k; })[0];
+  var admin = user && user.role === 'admin';
+  var qui = user ? ((user.prenom || '') + ' ' + (user.nom || '')).trim() : 'l’appli';
+  var quand = today_();
+  var val = function (key) {
+    var v = String(d[key] === undefined || d[key] === null ? '' : d[key]).trim();
+    if (key === 'fluide') return normFluide_(v);
+    var n = num_(v); return isFinite(n) ? n : '';
+  };
+  var same = function (a, b) {
+    if (typeof a === 'number' || typeof b === 'number') { var x = num_(a), y = num_(b); return isFinite(x) && isFinite(y) && Math.abs(x - y) < 1e-6; }
+    return normFluide_(a) === normFluide_(b);
+  };
+  var vide = function (v) { return v === '' || v === null || v === undefined || /^n\.?a\.?$/i.test(String(v).trim()); };
+  if (!row) {
+    var pre = val('precharge'), gpm = val('gpm');
+    var rec = { 'Marque': marque, 'Modèle': modele, 'Type d’appareil': 'Unité extérieure', 'Type d’installation': String(d.type || ''),
+      'Liaisons': (pre !== '' && pre > 0) || (gpm !== '' && gpm > 0) ? 'Frigorifique' : '',
+      'Fluide': val('fluide'), 'Charge usine (kg)': val('chargeUsine'), 'Longueur préchargée (m)': pre, 'Charge supplémentaire (g/m)': gpm,
+      'Source': 'Ajouté depuis l’appli par ' + qui + ' le ' + quand + (chantierId ? ' (chantier ' + chantierId + ')' : ''),
+      'À vérifier': admin ? '' : 'Nouveau modèle ajouté par ' + qui + ' le ' + quand };
+    writeRow_(t, rec, null);
+    return admin ? 'Modèle ' + modele + ' ajouté à la base machines.' : 'Modèle ' + modele + ' ajouté à la base machines (l’administrateur vérifiera ses données).';
+  }
+  var changes = [], up = {};
+  MACH_DATA.forEach(function (f) {
+    var v = val(f[0]); if (v === '') return;
+    var old = row[f[1]];
+    if (!vide(old) && same(old, v)) return;
+    changes.push(f[2] + ' ' + (typeof v === 'number' ? fr_(v, f[0] === 'gpm' ? 0 : 2) : v) + (f[3] ? ' ' + f[3] : '') + (vide(old) ? ' (vide dans la base)' : ' au lieu de ' + (typeof v === 'number' ? fr_(num_(old), f[0] === 'gpm' ? 0 : 2) : old)));
+    up[f[1]] = v;
+  });
+  if (!changes.length) return '';
+  if (admin) {
+    up['Source'] = (String(row['Source'] || '') + (row['Source'] ? ' · ' : '') + 'mis à jour par ' + qui + ' le ' + quand).slice(0, 1000);
+    writeRow_(t, up, row._row);
+    return 'Base machines mise à jour pour ' + row['Modèle'] + ' : ' + changes.join(', ') + '.';
+  }
+  writeRow_(t, { 'À vérifier': (String(row['À vérifier'] || '') + (row['À vérifier'] ? ' · ' : '') + qui + ' propose le ' + quand + ' : ' + changes.join(', ')).slice(0, 1000) }, row._row);
+  return 'Proposition envoyée : l’administrateur validera la mise à jour de ' + row['Modèle'] + ' dans la base machines.';
 }
 
 var CORBEILLE = '_Chantiers supprimés';
@@ -1599,6 +1660,7 @@ function profileSummary_(user) {
   var out = { annee: new Date().getFullYear() - 1, detecteursAFaire: det.filter(function (x) { return !x.ok; }).length,
     bouteillesSansTare: boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim() && !/rendu/i.test(String(r['Statut'] || '')) && !isFinite(num_(r['Poids à vide (kg)'])); }).length };
   if (user.role !== 'admin') return out;
+  out.machinesAVerifier = ss_().getSheetByName(SH.machines) ? readTable_(SH.machines).rows.filter(function (r) { return String(r['À vérifier'] || '').trim(); }).length : 0;
   out.comptes = readTable_(SH.ops).rows.length;
   out.detecteurs = det.length;
   out.distributeurs = distributeurs_().length;
