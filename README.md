@@ -36,3 +36,5 @@ L'adresse de l'application est réglée dans `docs/config.js`.
   - **Alertes d'échéance** : sur l'accueil (contrôle de détecteur à venir, bouteille de récupération presque pleine) et par e-mail automatique pour les bouteilles et le contrôle des détecteurs.
   - **Export du registre** : manipulations d'une période (date, chantier, machine, fluide, quantité, bouteille, opérateur, n° CERFA) en Excel et en PDF.
   - **Machines à vérifier dans l'appli** : liste des ajouts et propositions des opérateurs avec Accepter (base mise à jour) ou Refuser, sans passer par le Google Sheets.
+  - **Brouillon de mise en service** : la saisie en cours (photos comprises) est gardée sur le téléphone si le réseau coupe ou si l'appli est fermée, et reprise là où on s'était arrêté.
+  - **Envoi des documents au client** (option activable / désactivable par l'admin dans son profil) : bouton « Envoyer au client » sur la fiche chantier, qui envoie le rapport d'installation et le CERFA par e-mail depuis tbald.archenergie@gmail.com ; e-mail client facultatif sur la fiche chantier.
