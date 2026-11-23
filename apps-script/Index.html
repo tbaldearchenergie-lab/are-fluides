@@ -13,7 +13,7 @@
   #app{max-width:560px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
   header{position:sticky;top:0;z-index:5;background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px;min-height:64px}
   header .t{flex:1;min-width:0}
-  header .lg{display:flex;flex:0 0 auto;height:40px}
+  header .lg{display:flex;flex:0 0 auto;height:40px;padding:0;border:0;background:none;cursor:pointer}
   header .lg svg{height:40px;width:auto}
   header .sep{width:1px;align-self:stretch;margin:8px 0;background:rgba(255,255,255,.25);flex:0 0 auto}
   header .h{font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -215,9 +215,13 @@ function loadChantiers() {
     .then(function (r) { S.chantiers = r[0]; S.fluides = r[1]; S.machines = r[2] || []; S.loaded = true; render(); if (!S.summary) loadSummary(); })
     .catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
 }
+function loadOpsList() {
+  if (!isAdmin() || S.opsList) return;
+  call('listOperateurs').then(function (l) { S.opsList = l; if (S.screen === 'chantierForm') render(); }).catch(function () {});
+}
 function emptyForm() {
   return { id: '', projet: '', prenom: '', nom: '', adresse: '', cp: '', ville: '', marque: '', modele: '', chargeUsine: '',
-    longueur: '', precharge: '', gpm: '', type: '', fluideChoix: '', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '' };
+    longueur: '', precharge: '', gpm: '', type: '', fluideChoix: '', fluideAutre: '', inflam: '', gwpManuel: '', commentaires: '', responsable: '', email: '' };
 }
 function formFromChantier(c) {
   var f = emptyForm();
@@ -417,7 +421,7 @@ var A = {
   pickReleve: function () { var i = document.getElementById('releveInput'); if (i) i.click(); },
   pagePrev: function () { if (S.page > 0) { S.page--; render(); window.scrollTo(0, 0); } },
   pageNext: function () { S.page++; render(); window.scrollTo(0, 0); },
-  newChantier: function () { S.form = emptyForm(); go('chantierForm'); },
+  newChantier: function () { S.form = emptyForm(); if (isAdmin()) S.form.responsable = S.user.id; loadOpsList(); go('chantierForm'); },
   openChantier: function (id) { S.confirmDelete = false; S.confirmMes = false; S.confirmRapport = false; S.confirmManip = null; S.editMes = null; S.progress = null; S.ctx = null; S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; if (S.screen === 'home' || S.screen === 'chantiers') S.listScreen = S.screen; go('chantier'); loadMes().catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
   deleteChantier: function () {
     var id = S.cur.id; S.confirmDelete = false;
@@ -425,18 +429,20 @@ var A = {
       S.chantiers = S.chantiers.filter(function (c) { return c.id !== id; }); S.cur = null; S.stack = []; S.screen = listScreen(); render();
     });
   },
-  editChantier: function () { S.form = formFromChantier(S.cur); go('chantierForm'); },
+  editChantier: function () { S.form = formFromChantier(S.cur); loadOpsList(); go('chantierForm'); },
   saveChantier: function () {
     var f = S.form, fl = formFluid(f);
     var data = {
       id: f.id, projet: f.projet, prenom: f.prenom, nom: f.nom, adresse: f.adresse, cp: f.cp, ville: f.ville,
       marque: brandMatch(f.marque) || f.marque, modele: f.modele, chargeUsine: f.chargeUsine, longueur: f.longueur, precharge: f.precharge, gpm: f.gpm, type: f.type,
       fluide: fl, inflam: fluidInfo(fl) ? '' : f.inflam, gwpManuel: f.gwpManuel, commentaires: f.commentaires,
-      machine: machAction(f, machineCheck(f))
+      machine: machAction(f, machineCheck(f)), responsable: isAdmin() ? (f.responsable || S.user.id) : undefined, email: f.email
     };
     run(call('saveChantier', data), f.id ? 'Fiche chantier enregistrée.' : 'Chantier créé.').then(function (c) {
       if (c.machineMsg) { S.msg = { text: S.msg.text + ' ' + c.machineMsg }; call('listMachines').then(function (l) { S.machines = l || S.machines; }).catch(function () {}); }
-      S.cur = c; S.stack = [listScreen()]; S.screen = 'chantier'; S.ctx = null; loadMes().catch(function () {});
+      S.cur = c; S.stack = [listScreen()]; S.screen = 'chantier'; S.ctx = null;
+      var lm = loadMes();
+      if (S.regul && !f.id) lm.then(function () { applyRegul(); }).catch(function () {}); else lm.catch(function () {});
       call('listChantiers').then(function (l) { S.chantiers = l; });
       render();
     });
@@ -447,7 +453,7 @@ var A = {
     if (S.pwd.newPassword !== S.pwd.confirm) { S.msg = { err: true, text: 'Les deux nouveaux mots de passe ne sont pas identiques.' }; return render(); }
     run(call('changePassword', { oldPassword: S.pwd.oldPassword, newPassword: S.pwd.newPassword, remember: load('are_remember') }), 'Mot de passe modifié. Tes autres appareils ont été déconnectés.').then(function () { S.pwd = { oldPassword: '', newPassword: '', confirm: '' }; S.showPw = {}; render(); });
   },
-  goAdmin: function () { go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
+  goAdmin: function () { S.opsList = null; go('admin'); run(call('listOperateurs')).then(function (l) { S.ops = l; render(); }); },
   newOp: function () { S.confirmDelete = false; S.opForm = { id: '', prenom: '', nom: '', email: '', email2: '', role: 'operateur', attestation: '', password: genPassword(), actif: true }; go('opForm'); },
   editOp: function (id) { var o = S.ops.filter(function (x) { return x.id === id; })[0]; S.confirmDelete = false; S.opForm = { id: o.id, prenom: o.prenom, nom: o.nom, email: o.email, email2: o.email2 || '', role: o.role, attestation: o.attestation, password: '', actif: o.actif, appareils: o.appareils, derniereUtilisation: o.derniereUtilisation, attestationChargee: o.attestationChargee, attestationDate: o.attestationDate }; go('opForm'); },
   toggleActif: function () {
@@ -546,17 +552,19 @@ var V = {
 
   home: function () {
     var u = S.user, sm = S.summary || {};
-    var mine = S.chantiers.filter(function (c) { return c.creePar === u.id && !c.misEnService; });
+    var mine = S.chantiers.filter(function (c) { return c.responsable === u.id && !c.misEnService; });
     mine.sort(function (a, b) { return String(b.id).localeCompare(String(a.id), 'fr', { numeric: true }); });
     var h = '<div style="font-size:22px;font-weight:700">Bonjour ' + esc(u.prenom) + '</div>' + msgBox() + attBanner();
-    if (sm.detecteursAFaire) h += '<button class="msg err" data-act="' + (isAdmin() ? 'goDetecteurs' : 'goProfile') + '" style="border:0;text-align:left;width:100%;cursor:pointer">' +
-      sm.detecteursAFaire + ' détecteur' + (sm.detecteursAFaire > 1 ? 's' : '') + ' de fuite à faire contrôler' + (isAdmin() ? ' →' : ' : préviens l’administrateur.') + '</button>';
+    (sm.alertes || []).forEach(function (a) {
+      var act = a.kind === 'detecteur' ? (isAdmin() ? 'goDetecteurs' : 'noop') : 'goBottles';
+      h += '<button class="msg ' + (a.grave ? 'err' : 'info') + '" data-act="' + act + '" style="border:0;text-align:left;width:100%;cursor:pointer">' + esc(a.text) + (a.kind === 'detecteur' && !isAdmin() ? ' Préviens l’administrateur.' : ' →') + '</button>';
+    });
     if (sm.machinesAVerifier) h += '<div class="msg info">' + sm.machinesAVerifier + ' machine' + (sm.machinesAVerifier > 1 ? 's' : '') + ' à vérifier dans l’onglet Machines du Google Sheets (colonne « À vérifier » : ajouts et propositions des opérateurs). Vide la case une fois validé.</div>';
     if (sm.bouteillesSansTare && isAdmin()) h += '<button class="msg info" data-act="goBottles" style="border:0;text-align:left;width:100%;cursor:pointer">' + sm.bouteillesSansTare + ' bouteille' + (sm.bouteillesSansTare > 1 ? 's' : '') + ' sans poids à vide : les pesées ne peuvent pas être calculées →</button>';
     h += '<button class="btn lime" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
     h += '<div class="sec">Mes chantiers à mettre en service' + (S.loaded ? ' (' + mine.length + ')' : '') + '</div>';
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
-    else if (!mine.length) h += '<div class="card center"><b>Tout est à jour</b><div class="note">Tous les chantiers que tu as créés sont mis en service.</div></div>';
+    else if (!mine.length) h += '<div class="card center"><b>Tout est à jour</b><div class="note">Tous les chantiers dont tu es responsable sont mis en service.</div></div>';
     else h += '<div style="display:flex;flex-direction:column;gap:10px">' + mine.map(chantierItem).join('') + '</div>';
     h += '<button class="btn out" data-act="goChantiers">' + ICON.chantiers + 'Tous les chantiers</button>';
     return h;
@@ -564,22 +572,23 @@ var V = {
 
   chantiers: function () {
     var q = S.search.trim().toLowerCase();
-    var mineCount = S.chantiers.filter(function (c) { return c.creePar === S.user.id; }).length;
+    var mineCount = S.chantiers.filter(function (c) { return c.responsable === S.user.id; }).length;
     var annees = {}; S.chantiers.forEach(function (c) { if (c.annee) annees[c.annee] = (annees[c.annee] || 0) + 1; });
     var curY = String(new Date().getFullYear()); if (!annees[curY]) annees[curY] = 0;
     if (S.annee === undefined) S.annee = curY;
     var inYear = S.chantiers.filter(function (c) { return !S.annee || c.annee === S.annee; });
-    mineCount = inYear.filter(function (c) { return c.creePar === S.user.id; }).length;
-    var todoCount = inYear.filter(function (c) { return c.creePar === S.user.id && !c.misEnService; }).length;
+    mineCount = inYear.filter(function (c) { return c.responsable === S.user.id; }).length;
+    var todoCount = inYear.filter(function (c) { return c.responsable === S.user.id && !c.misEnService; }).length;
     var list = inYear.filter(function (c) {
-      if (S.mine && c.creePar !== S.user.id) return false;
+      if (S.mine && c.responsable !== S.user.id) return false;
       if (S.mine === '2' && c.misEnService) return false;
       return !q || [c.client, c.adresse, c.ville, c.cp, c.projet, c.marque, c.modele].join(' ').toLowerCase().indexOf(q) >= 0;
     });
     var pages = Math.max(1, Math.ceil(list.length / PAGE));
     if (S.page >= pages) S.page = pages - 1;
     var page = S.page, start = page * PAGE;
-    var h = msgBox() + '<button class="btn lime" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
+    var h = msgBox() + '<button class="btn lime" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>' +
+      '<button class="btn out" data-act="goCerfa">' + ICON.doc + 'Saisir un CERFA papier</button>';
     h += yearStrip(annees, S.chantiers.length, S.annee, 'setAnnee', 'chantier', 'Année des chantiers');
     h += chips([['0', 'Tous (' + inYear.length + ')'], ['1', 'Mes chantiers (' + mineCount + ')'], ['2', 'Mes chantiers à mettre en service (' + todoCount + ')']], S.mine || '0', 'setMine');
     h += '<div class="search">' + ICON.search + '<input type="search" aria-label="Rechercher un chantier" placeholder="Client, ville, n° projet, machine…" data-bind="search" data-live="1" value="' + esc(S.search) + '"></div>';
@@ -604,14 +613,14 @@ var V = {
     var rows = [['Type', c.type], ['Marque UE', c.marque], ['Modèle UE', c.modele], ['N° série UE', c.serieUE], ['N° série UI', c.serieUI],
       ['Fluide', c.fluide], ['GWP', c.gwp], ['Charge usine', c.chargeUsine ? c.chargeUsine + ' kg' : ''], ['Liaisons', c.longueur ? c.longueur + ' m' : ''],
       ['Précharge / charge suppl.', (c.precharge || '?') + ' m / ' + (c.gpm || '?') + ' g/m'],
-      ['Mise en service', c.dateMes || 'pas encore']];
+      ['Mise en service', c.dateMes || 'pas encore'], ['Responsable', c.responsableNom || '']];
     return msgBox() + '<div class="card" style="gap:6px"><div style="font-size:18px;font-weight:700">' + esc(c.client) + '</div>' +
       '<div class="note">' + esc([c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', ') || 'Adresse à compléter') + '</div>' +
       (c.projet ? '<div class="note">Projet ' + esc(c.projet) + '</div>' : '') + '</div>' +
       '<div class="rows">' + rows.map(function (r) { return '<div class="row"><span>' + r[0] + '</span><span>' + esc(r[1] || '—') + '</span></div>'; }).join('') + '</div>' +
       (c.commentaires ? '<div class="card"><div class="note">' + esc(c.commentaires) + '</div></div>' : '') +
       (ownsChantier(c) ? '<button class="btn out" data-act="editChantier">Modifier la fiche chantier</button>' : '') +
-      viewChantierMes(c) + deleteBlock(c);
+      viewChantierMes(c) + envoiClientBlock(c) + deleteBlock(c);
   },
 
   chantierForm: function () {
@@ -643,7 +652,12 @@ var V = {
       field('Longueur (m)', 'form.longueur', { mode: 'decimal' }) + field('Précharge (m)', 'form.precharge', { mode: 'decimal' }) + field('Charge suppl. (g/m)', 'form.gpm', { mode: 'decimal' }) + '</div>' +
       '<div id="longAlert">' + longueurAlerte(f, mSel) + '</div></div>' +
       '<div class="sec">Commentaires</div><div class="card">' +
+      (S.summary && S.summary.envoiClient ? field('E-mail du client (facultatif, pour lui envoyer ses documents)', 'form.email', { type: 'email', ph: 'client@exemple.fr' }) : '') +
       '<label>Commentaires<textarea rows="3" data-bind="form.commentaires">' + esc(f.commentaires) + '</textarea></label></div>' +
+      (isAdmin() ? '<div class="sec">Responsable du chantier</div><div class="card"><label>Responsable<select data-bind="form.responsable">' +
+        (S.opsList || [{ id: S.user.id, prenom: S.user.prenom, nom: S.user.nom, actif: true }]).filter(function (o) { return o.actif || o.id === f.responsable; }).map(function (o) {
+          return '<option value="' + esc(o.id) + '"' + (o.id === (f.responsable || S.user.id) ? ' selected' : '') + '>' + esc((o.prenom + ' ' + o.nom).trim() + (o.id === S.user.id ? ' (moi)' : '')) + '</option>';
+        }).join('') + '</select></label><div class="note">Le responsable voit ce chantier dans ses chantiers à mettre en service et a les mêmes droits que s’il l’avait créé. Seul un administrateur peut le changer.</div></div>' : '') +
       '<div id="machBox">' + (MACH_HTML = machBox(f)) + '</div>' +
       '<button class="btn" data-act="saveChantier"' + (S.busy ? ' disabled' : '') + '>' + (S.busy ? 'Enregistrement…' : 'Enregistrer le chantier') + '</button>';
   },
@@ -701,7 +715,7 @@ var V = {
 };
 
 /** Droits : l'administrateur agit sur tous les chantiers, un opérateur seulement sur ceux qu'il a créés. */
-function ownsChantier(c) { return !!(c && S.user && (S.user.role === 'admin' || c.creePar === S.user.id)); }
+function ownsChantier(c) { return !!(c && S.user && (S.user.role === 'admin' || c.responsable === S.user.id)); }
 var APP_ADDRESS = 'https://fluides.toumany.com';
 function shareText(x) {
   return 'Bonjour' + (x.prenom ? ' ' + x.prenom : '') + ',\n' + (x.nouveau ? 'Ton compte ARE Fluides est créé.' : 'Ton mot de passe ARE Fluides a été changé.') + '\n\n' +
@@ -721,7 +735,7 @@ function shareBox() {
 }
 function canDeleteChantier(c) { return ownsChantier(c) && !c.misEnService; }
 function deleteBlock(c) {
-  if (!ownsChantier(c)) return c.misEnService ? '' : '<div class="note" style="text-align:center">Seul l’opérateur qui a créé ce chantier ou un administrateur peut le supprimer.</div>';
+  if (!ownsChantier(c)) return c.misEnService ? '' : '<div class="note" style="text-align:center">Seul le responsable du chantier ou un administrateur peut le supprimer.</div>';
   if (c.misEnService) return '<div class="note" style="text-align:center">Ce chantier ne peut pas être supprimé car une mise en service a déjà été réalisée. Pour le supprimer, il faut d’abord supprimer la mise en service.</div>';
   return S.confirmDelete
     ? '<div class="msg err">Supprimer la fiche chantier de ' + esc(c.client) + ' ? Elle disparaît de la liste (une copie est gardée dans le tableur).</div><div class="g2"><button class="btn out" data-act="cancelDelete">Annuler</button><button class="btn danger" data-act="deleteChantier">Oui, supprimer</button></div>'
@@ -812,6 +826,45 @@ function loadMes() {
   });
 }
 
+/* ---------- Brouillon de mise en service : gardé sur l'appareil (IndexedDB, photos comprises) jusqu'à l'enregistrement */
+var DRAFT_DB = null;
+function draftStore(mode) {
+  return new Promise(function (ok, ko) {
+    var go = function (db) { try { ok(db.transaction('drafts', mode).objectStore('drafts')); } catch (e) { ko(e); } };
+    if (DRAFT_DB) return go(DRAFT_DB);
+    if (!window.indexedDB) return ko(new Error('IndexedDB indisponible'));
+    var rq = indexedDB.open('are-fluides', 1);
+    rq.onupgradeneeded = function () { rq.result.createObjectStore('drafts'); };
+    rq.onsuccess = function () { DRAFT_DB = rq.result; go(DRAFT_DB); };
+    rq.onerror = function () { ko(rq.error); };
+  });
+}
+function draftKey(chantierId, add) { return 'mes_' + chantierId + (add ? '_manip' : ''); }
+function draftPut(key, val) { return draftStore('readwrite').then(function (st) { st.put(val, key); }).catch(function () {}); }
+function draftGet(key) { return draftStore('readonly').then(function (st) { return new Promise(function (ok) { var r = st.get(key); r.onsuccess = function () { ok(r.result || null); }; r.onerror = function () { ok(null); }; }); }).catch(function () { return null; }); }
+function draftDel(key) { return draftStore('readwrite').then(function (st) { st.delete(key); }).catch(function () {}); }
+var DRAFT_T = null;
+function saveDraftSoon() {
+  if (!S.mes || S.screen !== 'mes' || S.mes.saving || S.draft || !S.cur) return;
+  var key = draftKey(S.cur.id, S.mes.add);
+  clearTimeout(DRAFT_T);
+  DRAFT_T = setTimeout(function () {
+    if (!S.mes || S.mes.saving || S.draft) return;
+    var copy = JSON.parse(JSON.stringify(S.mes)); copy.saving = null; copy.reading = null;
+    // Rien de saisi au-delà des valeurs de départ : pas de brouillon
+    if (copy.step === 0 && !copy.sig && !Object.keys(copy.photos).some(function (k) { return copy.photos[k].length; })) return;
+    draftPut(key, { at: Date.now(), mes: copy });
+  }, 700);
+}
+function offerDraft() {
+  if (!S.cur || !S.mes) return;
+  var key = draftKey(S.cur.id, S.mes.add);
+  draftGet(key).then(function (dr) {
+    if (!dr || !dr.mes || Date.now() - dr.at > 60 * 864e5) return;   // brouillon de plus de 60 jours : ignoré
+    if (S.screen !== 'mes') return;
+    S.draft = dr; render();
+  });
+}
 function newMesState(addOnly) {
   var ctx = S.ctx, c = ctx.chantier, mes = ctx.mes;
   var dets = ctx.detecteurs.filter(function (x) { return x.ok; });
@@ -905,6 +958,9 @@ function mesCheckStep(key) {
     }
     if (d.op === 'ajout' || d.op === 'recup') {
       if (!d.bouteille) return 'Choisis la bouteille utilisée.';
+      var cb = curBottle();
+      if (cb && cb.derniereOp && d.date < frToIso(cb.derniereOp)) return 'La bouteille ' + cb.ref + ' a déjà une opération enregistrée le ' + cb.derniereOp + ' : la date de l’intervention ne peut pas être antérieure. Change la date (étape 1) ou choisis une autre bouteille.';
+      if (cb && cb.dateEntree && d.date < frToIso(cb.dateEntree)) return 'La bouteille ' + cb.ref + ' est entrée au dépôt le ' + cb.dateEntree + ' : la date de l’intervention ne peut pas être antérieure.';
       if (d.mode === 'direct') { if (!(mesQuantite() > 0)) return 'Indique la quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + ' (kg).'; }
       else {
         if (!isFinite(numOrNaN(d.poidsAvant)) || !isFinite(numOrNaN(d.poidsApres))) return 'Saisis les deux pesées (bouteille avec ses accessoires).';
@@ -960,7 +1016,7 @@ function viewChantierMes(c) {
     '<div class="note">' + (mes.serieUE ? 'UE ' + esc(mes.serieUE) : '') + (mes.serieUI ? ' · UI ' + esc(mes.serieUI) : '') + (mes.photos ? ' · ' + mes.photos + ' photo' + (mes.photos > 1 ? 's' : '') : '') + '</div>';
   if (!mes.manips.length) h += '<div class="note">Démarrage sans manipulation de fluide : pas de CERFA.</div>';
   h += mes.manips.map(function (x) {
-    return '<div class="manip"><div><b>' + esc(x.label) + '</b><div class="note">' + esc(x.date) + ' · CERFA ' + esc(x.cerfa) + (x.quantite ? ' · ' + esc(frNum(numOrNaN(x.quantite))) + ' kg' : '') + '</div></div>' +
+    return '<div class="manip"><div><b>' + esc(x.label + (x.papier ? ' (CERFA papier)' : '')) + '</b><div class="note">' + esc(x.date) + ' · CERFA ' + esc(x.cerfa) + (x.quantite ? ' · ' + esc(frNum(numOrNaN(x.quantite))) + ' kg' : '') + '</div></div>' +
       '<div class="chips" style="flex-wrap:nowrap">' + (x.lien ? '<a class="chip" style="display:flex;align-items:center;text-decoration:none;color:var(--ink)" target="_blank" rel="noopener" href="' + esc(x.lien) + '">PDF</a>' : '<button class="chip" data-act="redoCerfa" data-arg="' + esc(x.cerfa) + '" style="display:flex;align-items:center;gap:6px;border-color:var(--warn);color:var(--warn)" aria-label="Refaire le PDF du CERFA ' + esc(x.cerfa) + '">' + ICON.redo + 'Refaire</button>') +
       (mes.peutModifier ? (S.confirmManip === x.cerfa ? '<button class="chip" data-act="deleteManip" data-arg="' + esc(x.cerfa) + '" style="border-color:var(--warn);color:var(--warn)">Confirmer</button>' : '<button class="chip" data-act="askDeleteManip" data-arg="' + esc(x.cerfa) + '" aria-label="Supprimer la fiche ' + esc(x.cerfa) + '">✕</button>') : '') + '</div></div>';
   }).join('');
@@ -977,7 +1033,7 @@ function viewChantierMes(c) {
   h += '</div>';
   h += '<button class="btn" data-act="addManip">Ajouter une manipulation</button>';
   if (mes.peutModifier) {
-    var missing = mes.manips.filter(function (x) { return !x.lien; }).length;
+    var missing = mes.manips.filter(function (x) { return !x.lien && !x.papier; }).length;
     if (missing) h += '<button class="btn out" data-act="remakeDocs">' + ICON.redo + 'Refaire tous les documents (CERFA et rapport)</button>';
     if (S.editMes) {
       h += '<div class="card"><b>Modifier la mise en service</b>' +
@@ -997,7 +1053,7 @@ function viewChantierMes(c) {
           '<div class="g2"><button class="btn out" data-act="cancelEditMes">Annuler</button><button class="btn" data-act="saveEditMes">Enregistrer</button></div></div>';
       } else h += '<button class="btn out" data-act="editMes">Compléter les n° de série</button>';
     }
-    h += '<div class="note" style="text-align:center">Tu peux consulter ce chantier et y ajouter des manipulations. Seul l’opérateur qui a créé le chantier ou un administrateur peut modifier ou supprimer la mise en service et le rapport.</div>';
+    h += '<div class="note" style="text-align:center">Tu peux consulter ce chantier et y ajouter des manipulations. Seul le responsable du chantier ou un administrateur peut modifier ou supprimer la mise en service et le rapport.</div>';
   }
   return h;
 }
@@ -1022,6 +1078,12 @@ V.mes = function () {
   var h = '<div class="steps">' + steps.map(function (s, i) {
     return '<div class="st' + (i <= m.step ? ' on' : '') + (i === m.step ? ' cur' : '') + '"><i></i><span>' + MES_STEP_LABELS[s] + '</span></div>';
   }).join('') + '</div><div class="stepname">Étape ' + (m.step + 1) + ' sur ' + steps.length + ' · <b>' + MES_STEP_LABELS[key] + '</b></div>' + msgBox();
+  if (S.draft) {
+    var dd = new Date(S.draft.at), dm = S.draft.mes, np = 0; Object.keys(dm.photos || {}).forEach(function (k) { np += (dm.photos[k] || []).length; });
+    h += '<div class="card" style="border:2px solid var(--lime)"><b>Saisie en cours retrouvée</b><div class="note">Commencée le ' + dd.toLocaleDateString('fr-FR') + ' à ' + dd.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) +
+      ' · étape ' + (dm.step + 1) + (np ? ' · ' + np + ' photo' + (np > 1 ? 's' : '') : '') + (dm.sig ? ' · signée' : '') + '</div>' +
+      '<div class="g2"><button class="btn out" data-act="dropDraft">Recommencer</button><button class="btn" data-act="resumeDraft">Reprendre</button></div></div>';
+  }
   h += '<div class="note"><b style="color:var(--ink)">' + esc(c.client) + '</b> · ' + esc([c.marque, c.modele].filter(Boolean).join(' ') || 'machine à préciser') + (c.fluide ? ' · ' + esc(c.fluide) : '') + '</div>';
 
   if (key === 'equip') {
@@ -1082,7 +1144,8 @@ V.mes = function () {
         }).join('') + '</select></label>' +
         (!nOk ? '<div class="msg err">Aucune bouteille ' + (d.op === 'ajout' ? 'neuve ou de transfert de ' + esc(c.fluide || 'ce fluide') : 'de récupération ou de transfert vide ou de ' + esc(c.fluide || 'ce fluide')) + ' au dépôt.</div>' : '') +
         (bl.length > nOk ? '<div class="note">Les bouteilles grisées contiennent un autre fluide.</div>' : '') +
-        (cur ? '<div class="note">Dernière pesée de la bouteille seule : ' + (cur.pesee ? '<b>' + esc(cur.pesee) + ' kg</b>' : 'aucune (à renseigner dans la fiche bouteille)') + '.</div>' : '') + '</div>' +
+        (cur ? '<div class="note">Dernière pesée de la bouteille seule : ' + (cur.pesee ? '<b>' + esc(cur.pesee) + ' kg</b>' : 'aucune (à renseigner dans la fiche bouteille)') + '.' + (cur.derniereOp ? ' Dernière opération le ' + esc(cur.derniereOp) + '.' : '') + '</div>' : '') +
+        (cur && cur.derniereOp && d.date < frToIso(cur.derniereOp) ? '<div class="msg err">Date de l’intervention (' + esc(isoToFr(d.date)) + ') antérieure à la dernière opération de cette bouteille : change la date à l’étape 1 ou choisis une autre bouteille.</div>' : '') + '</div>' +
         '<div class="card"><div class="note">Quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + '</div>' +
         chips([['pesee', 'Pesées avant / après'], ['direct', 'Saisie directe']], d.mode || 'pesee', 'setQteMode') +
         (d.mode === 'direct' ? field('Quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + ' (kg) *', 'mes.d.quantite', { mode: 'decimal' })
@@ -1172,8 +1235,10 @@ V.mesDone = function () {
 /* ---------- Actions */
 
 Object.assign(A, {
-  startMes: function () { if (!S.ctx) return; S.mes = newMesState(false); S.msg = null; go('mes'); },
-  addManip: function () { if (!S.ctx) return; S.mes = newMesState(true); S.msg = null; if (S.screen === 'mesDone') { S.stack = [listScreen()]; S.screen = 'chantier'; } go('mes'); },
+  startMes: function () { if (!S.ctx) return; S.mes = newMesState(false); S.msg = null; go('mes'); offerDraft(); },
+  addManip: function () { if (!S.ctx) return; S.mes = newMesState(true); S.msg = null; if (S.screen === 'mesDone') { S.stack = [listScreen()]; S.screen = 'chantier'; } go('mes'); offerDraft(); },
+  resumeDraft: function () { var dr = S.draft; S.draft = null; if (dr && dr.mes) { S.mes = dr.mes; S.mes.saving = null; S.mes.reading = null; S.msg = { text: 'Saisie reprise là où tu t’étais arrêté.' }; } render(); window.scrollTo(0, 0); },
+  dropDraft: function () { if (S.mes) draftDel(draftKey(S.cur.id, S.mes.add)); S.draft = null; render(); },
   backToChantier: function () { S.stack = [listScreen()]; S.screen = 'chantier'; S.msg = null; render(); window.scrollTo(0, 0); },
   setOp: function (k) { S.mes.d.op = k; S.msg = null; render(); },
   toggleNature: function (k) { var l = S.mes.d.nature, i = l.indexOf(k); if (i >= 0) l.splice(i, 1); else l.push(k); render(); },
@@ -1225,10 +1290,11 @@ Object.assign(A, {
       var data = {
         chantierId: c.id, op: d.op, date: isoToFr(d.date), serieUE: d.serieUE, serieUI: d.serieUI, chargeUsine: d.chargeUsine, vide: d.vide, tenue: d.tenue, remontee: d.remontee, nature: d.nature, natureAutre: d.natureAutre,
         bouteille: d.bouteille, poidsAvant: d.poidsAvant, poidsApres: d.poidsApres, mode: d.mode || 'pesee', quantite: d.quantite, poidsSeule: d.poidsSeule, distributeur: d.distributeur, detecteur: d.detecteur,
-        fuite: d.fuite, fuites: d.fuite === 'oui' ? d.fuites : [], observations: d.observations, photos: newPhotos(), signature: sigPdf
+        fuite: d.fuite, fuites: d.fuite === 'oui' ? d.fuites : [], observations: d.observations, photos: newPhotos(), signature: sigPdf, regulId: m.regulId || ''
       };
       return call('saveManip', data);
     }).then(function (res) {
+      draftDel(draftKey(c.id, m.add));   // enregistré : le brouillon n'a plus lieu d'être
       S.ctx.photoSlots.forEach(function (s) { m.photos[s].forEach(function (p) { p.sent = true; }); });
       result.cerfa = res.cerfa;
       if (d.bouteille) { result.bouteille = d.bouteille; result.pesee = d.poidsSeule; }
@@ -1315,7 +1381,7 @@ Object.assign(A, {
   },
   remakeDocs: function () {
     var mes = S.ctx.mes;
-    remakeDocs(mes.manips.map(function (x) { return x.cerfa; }))
+    remakeDocs(mes.manips.filter(function (x) { return !x.papier; }).map(function (x) { return x.cerfa; }))
       .then(function () { S.msg = { text: 'Documents refaits.' }; render(); })
       .catch(function (err) { S.progress = null; S.msg = { err: true, text: err.message }; render(); });
   }
@@ -1382,7 +1448,7 @@ function initSig() {
   var end = function () {
     if (!drawing) return; drawing = false;
     if (moved) {
-      S.mes.sig = cv.toDataURL('image/png'); var hint = cv.parentNode.querySelector('.sighint'); if (hint) hint.remove();
+      S.mes.sig = cv.toDataURL('image/png'); saveDraftSoon(); var hint = cv.parentNode.querySelector('.sighint'); if (hint) hint.remove();
       if (S.msg && S.msg.err && /Signe/.test(S.msg.text)) { S.msg = null; var mb = document.querySelector('.msg.err'); if (mb) mb.remove(); }
     }
   };
@@ -1391,20 +1457,21 @@ function initSig() {
 
 function render() {
   var scr = S.screen, logged = !!S.user;
+  if (scr === 'mes') saveDraftSoon();
   var showHeader = scr !== 'login' && scr !== 'setup';
   var title = scr === 'chantierForm' ? (S.form && S.form.id ? 'Modifier le chantier' : 'Nouveau chantier') : (scr === 'opForm' && S.opForm && !S.opForm.id ? 'Nouveau compte' : scr === 'bottleForm' ? (S.bf && S.bf.original ? 'Modifier la bouteille' : 'Nouvelle bouteille') : TITLES[scr]);
   var html = '';
   if (showHeader) {
     html += '<header>' + (S.stack.length ? '<button class="ib" aria-label="Retour" data-act="back">' + ICON.back + '</button>' : '') +
-      '<span class="lg">' + LOGO + '</span><span class="sep" aria-hidden="true"></span><div class="t"><div class="h">' + esc(title) + '</div></div>' +
-      (logged && scr !== 'home' ? '<button class="ib" aria-label="Accueil" data-act="home">' + ICON.home + '</button>' : '') + '</header>';
+      (logged ? '<button type="button" class="lg" data-act="home" aria-label="Accueil" title="Accueil">' + LOGO + '</button>' : '<span class="lg">' + LOGO + '</span>') +
+      '<span class="sep" aria-hidden="true"></span><div class="t"><div class="h">' + esc(title) + '</div></div></header>';
   }
   html += '<main>' + (V[scr] ? V[scr]() : '') + '</main>';
-  if (logged && /^(home|chantiers|profile|admin|bottles|bottle|detecteurs|distributeurs|declaration)$/.test(scr)) {
+  if (logged && /^(home|chantiers|profile|admin|bottles|bottle|detecteurs|distributeurs|declaration|machines|registre|reglages)$/.test(scr)) {
     html += '<nav><div class="in"><button class="tab' + (scr === 'home' ? ' on' : '') + '" data-act="home"' + (scr === 'home' ? ' aria-current="page"' : '') + '>' + ICON.home + 'Accueil</button>' +
       '<button class="tab' + (scr === 'chantiers' ? ' on' : '') + '" data-act="goChantiers"' + (scr === 'chantiers' ? ' aria-current="page"' : '') + '>' + ICON.chantiers + 'Chantiers</button>' +
       '<button class="tab' + (/^bottle/.test(scr) ? ' on' : '') + '" data-act="goBottles"' + (/^bottle/.test(scr) ? ' aria-current="page"' : '') + '>' + ICON.bottleNav + 'Bouteilles</button>' +
-      '<button class="avatar' + (/^(profile|admin|detecteurs|distributeurs|declaration)$/.test(scr) ? ' on' : '') + '" aria-label="Mon profil" data-act="goProfile">' + esc(initials(S.user)) + '</button></div></nav>';
+      '<button class="avatar' + (/^(profile|admin|detecteurs|distributeurs|declaration|machines|registre|reglages)$/.test(scr) ? ' on' : '') + '" aria-label="Mon profil" data-act="goProfile">' + esc(initials(S.user)) + '</button></div></nav>';
   }
   if (S.dialog) html += '<div class="sheetbg" id="dialog" data-act="closeDialog"><div class="sheet" role="alertdialog" aria-label="Confirmation" data-act="noop">' +
     '<div class="msg err" style="margin:0;font-size:16px">' + esc(S.dialog.text) + '</div>' +
@@ -1521,8 +1588,11 @@ V.profile = function () {
       adminCard('goDetecteurs', ICON.detector, 'Détecteurs de fuite', sm.detecteursAFaire ? sm.detecteursAFaire + ' contrôle' + (sm.detecteursAFaire > 1 ? 's' : '') + ' à faire' : n(sm.detecteurs, 'détecteur à jour', 'détecteurs à jour'),
         sm.detecteursAFaire ? 'color:#F4B48A;font-weight:600' : '') +
       adminCard('goDecl', ICON.doc, 'Faire ma déclaration annuelle', 'Chiffres ' + (sm.annee || new Date().getFullYear() - 1) + ' prêts à reporter') +
-      adminCard('goDistributeurs', ICON.depot, 'Distributeurs', n(sm.distributeurs, 'site de reprise des bouteilles', 'sites de reprise des bouteilles'));
-  }
+      adminCard('goDistributeurs', ICON.depot, 'Distributeurs', n(sm.distributeurs, 'site de reprise des bouteilles', 'sites de reprise des bouteilles')) +
+      adminCard('goRegistre', ICON.registre, 'Registre des mouvements', 'Export d’une période en PDF ou Excel') +
+      adminCard('goMachines', ICON.machine, 'Base machines', sm.machinesAVerifier ? sm.machinesAVerifier + ' à vérifier' : 'Modèles et caractéristiques', sm.machinesAVerifier ? 'color:#F4B48A;font-weight:600' : '') +
+      adminCard('goReglages', ICON.gear, 'Réglages', 'Envoi au client, e-mails d’alerte');
+  } else h += adminCard('goMachines', ICON.machine, 'Base machines', 'Modèles et caractéristiques');
   h += '<button class="btn out" data-act="goProfileEdit">Modifier mon profil</button>' +
     '<button class="btn danger" data-act="logout">Se déconnecter</button>' +
     '<div class="note">' + (isAdmin() ? 'Ton nom et ton numéro d’attestation sont repris sur tes propres CERFA.' : 'Ton nom et ton numéro d’attestation sont repris sur tes CERFA.') + '</div>';
@@ -1589,6 +1659,7 @@ V.bottle = function () {
   if (b.kind === 'neuve') rows.push(['Poids plein à l’achat', kg(b.plein)], ['Fluide à l’achat', kg(b.initial)]);
   rows.push(['Dernière pesée', kg(b.pesee)], ['Fluide restant', b.reste ? esc(b.reste) + ' kg' : '—']);
   if (b.dateEntree) rows.push([b.kind === 'neuve' ? 'Date d’achat' : 'Date d’entrée', esc(b.dateEntree)]);
+  if (b.kind !== 'neuve' && b.capacite) rows.push(['Capacité max', esc(b.capacite) + ' kg']);
   if (b.kind !== 'neuve') rows.push(['Distributeur récupérateur', b.distributeurNom ? esc(b.distributeurNom) : '<span style="color:var(--warn)">à choisir</span>']);
   var h = msgBox() + '<div class="card" style="gap:6px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><b style="font-size:20px">' + esc(b.ref) + '</b>' +
     '<span class="badge' + (b.statut === 'rendue' ? ' grey' : '') + '">' + esc(b.statutLabel) + '</span></div><span class="note">' + esc(b.type + (b.fluide ? ' · ' + b.fluide : '')) + '</span></div>' +
@@ -1616,6 +1687,7 @@ V.bottle = function () {
     h += '<div class="rows"><div class="row"><span>Statut</span><span>' + esc(b.statutLabel) + '</span></div>' +
       (b.statut === 'rendue' ? '<div class="row"><span>Distributeur</span><span>' + esc(b.distributeurNom || '—') + '</span></div><div class="row"><span>Date de retour</span><span>' + esc(b.dateRetour || '—') + '</span></div>' : '') + '</div>';
   }
+  h += controleBlock(b);
   h += '<div class="sec">Historique</div>' + (b.hist.length ? '<div class="rows">' + b.hist.map(function (x) {
     return '<div class="row"><span>' + esc(x.date || '—') + ' · ' + esc(x.op) + (x.client ? '<br><span style="font-size:13px">' + esc(x.client) + (x.cerfa ? ' · ' + esc(x.cerfa) : '') + '</span>' : '') + '</span><span>' + (x.qty ? esc(x.qty) + ' kg' : '') + '</span></div>';
   }).join('') + '</div>' : '<div class="note">Aucun mouvement enregistré.</div>');
@@ -1645,7 +1717,9 @@ V.bottleForm = function () {
     field(f.original ? 'Dernière pesée (kg)' : 'Pesée actuelle (kg), si la bouteille a déjà servi', 'bf.pesee', { mode: 'decimal', ph: neuve ? 'Vide = bouteille pleine' : 'Vide = bouteille vide' }) +
     (!neuve ? '<label>Distributeur récupérateur (case 13 du CERFA)<select data-bind="bf.distributeur"><option value="">À choisir plus tard</option>' +
       (S.bt ? S.bt.distributeurs : []).map(function (x) { return '<option value="' + esc(x.id) + '"' + (x.id === f.distributeur ? ' selected' : '') + '>' + esc(x.nom) + '</option>'; }).join('') + '</select></label>' +
-      '<div class="note">Le distributeur qui reprendra le fluide récupéré dans cette bouteille. Il est repris dans la case 13 du CERFA à chaque récupération.</div>' : '') +
+      '<div class="note">Le distributeur qui reprendra le fluide récupéré dans cette bouteille. Il est repris dans la case 13 du CERFA à chaque récupération.</div>' +
+      field('Capacité max de remplissage (kg)', 'bf.capacite', { mode: 'decimal', ph: 'Inscrite sur la bouteille' }) +
+      '<div class="note">Une alerte prévient quand la bouteille est pleine à 80 %.</div>' : '') +
     '<label>' + (neuve ? 'Date d’achat' : 'Date d’entrée au dépôt') + '<input type="date" max="' + todayIso() + '" data-bind="bf.dateEntree" value="' + esc(f.dateEntree) + '"></label>' +
     (neuve ? '<div class="note">L’achat d’une bouteille neuve compte dans la ligne « quantité acquise » de la déclaration annuelle de l’année d’achat.</div>' : '') + '</div>' +
     '<button class="btn" data-act="saveBottle"' + (S.busy ? ' disabled' : '') + '>Enregistrer la bouteille</button>';
@@ -1749,15 +1823,15 @@ Object.assign(A, {
   btTab: function (t) { S.btTab = t; render(); },
   btAnnee: function (v) { v = v || ''; if (v === S.btAnnee) return; S.btAnnee = v; render(); },
   openBottle: function (ref) { go('bottle'); openBottleDetail(ref); },
-  newBottle: function () { S.bf = { original: '', numero: '', kind: 'neuve', fluide: 'R32', vide: '', plein: '', pesee: '', distributeur: '', dateEntree: todayIso() }; go('bottleForm'); },
+  newBottle: function () { S.bf = { original: '', numero: '', kind: 'neuve', fluide: 'R32', vide: '', plein: '', pesee: '', distributeur: '', capacite: '', dateEntree: todayIso() }; go('bottleForm'); },
   editBottle: function () {
     var b = S.btD;
-    S.bf = { original: b.ref, numero: b.numero, kind: b.kind, fluide: b.fluide, vide: b.vide, plein: b.plein, pesee: '', distributeur: b.distributeur, dateEntree: frToIso(b.dateEntree) };
+    S.bf = { original: b.ref, numero: b.numero, kind: b.kind, fluide: b.fluide, vide: b.vide, plein: b.plein, pesee: '', distributeur: b.distributeur, capacite: b.capacite, dateEntree: frToIso(b.dateEntree) };
     go('bottleForm');
   },
   setBfKind: function (k) { S.bf.kind = k; render(); },
   saveBottle: function () {
-    var f = S.bf, d = { original: f.original, numero: f.numero, kind: f.kind, fluide: f.fluide, vide: f.vide, plein: f.kind === 'neuve' ? f.plein : '', pesee: f.pesee, distributeur: f.kind === 'neuve' ? '' : f.distributeur, dateEntree: isoToFr(f.dateEntree) };
+    var f = S.bf, d = { original: f.original, numero: f.numero, kind: f.kind, fluide: f.fluide, vide: f.vide, plein: f.kind === 'neuve' ? f.plein : '', pesee: f.pesee, distributeur: f.kind === 'neuve' ? '' : f.distributeur, capacite: f.kind === 'neuve' ? '' : f.capacite, dateEntree: isoToFr(f.dateEntree) };
     run(call('saveBouteille', d), f.original ? 'Bouteille modifiée.' : 'Bouteille ajoutée au dépôt.').then(function (b) {
       setBottle(b); S.screen = 'bottle'; if (!f.original) { S.stack = ['bottles']; } render(); window.scrollTo(0, 0);
       call('listBouteilles').then(function (x) { S.bt = x; }).catch(function () {});
@@ -1836,13 +1910,271 @@ document.addEventListener('input', function (e) {
   if (/^form\.(modele|marque|chargeUsine|precharge|gpm|fluideAutre)$/.test(p || '')) { setPath(p, e.target.value); refreshMachBox(); }
   // Calculs de la manipulation affichés pendant la saisie (quantité, écart, cohérence de la pesée)
   if (/^mes\.d\.(poidsAvant|poidsApres|quantite|poidsSeule|chargeUsine)$/.test(p || '') && S.mes) { setPath(p, e.target.value); updateLive(p); }
+  if (/^mes\./.test(p || '')) saveDraftSoon();
 });
 
 function openPicker(kind, arg, how) {
   if (kind === 'photo') A.pickPhoto(arg + (how === 'gal' ? '|gal' : ''));
   else if (kind === 'plate') A.readPlate(arg + (how === 'gal' ? '|gal' : ''));
   else if (kind === 'att') A.pickAtt((how === 'gal' ? 'file' : 'cam') + '|' + arg);
+  else if (kind === 'cerfa') { var i = document.getElementById(how === 'gal' ? 'cerfaFile' : 'cerfaCam'); if (i) { i.value = ''; i.click(); } }
 }
+/* ============================== Livraison 4 ============================== */
+Object.assign(ICON, {
+  registre: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h14v16H5z"/><path d="M9 8h7M9 12h7M9 16h4"/><path d="M7 8h.01M7 12h.01M7 16h.01"/></svg>',
+  machine: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="13" rx="2"/><circle cx="9" cy="11.5" r="3.5"/><path d="M15 9h3M15 12h3M15 15h3M6 18v2M18 18v2"/></svg>',
+  gear: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  scale: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M8 14l1-6h6l1 6M12 8V5"/></svg>',
+  mail: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>'
+});
+Object.assign(TITLES, { machines: 'Base machines', registre: 'Registre des mouvements', reglages: 'Réglages', cerfa: 'CERFA papier' });
+
+/* ---------- Base machines */
+V.machines = function () {
+  var l = S.machs;
+  if (!l) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  var f = S.mf, q = String(f.q || '').toLowerCase().replace(/\s+/g, '');
+  var marques = []; l.forEach(function (m) { if (m.marque && marques.indexOf(m.marque) < 0) marques.push(m.marque); });
+  var app = []; l.forEach(function (m) { if (m.appareil && app.indexOf(m.appareil) < 0) app.push(m.appareil); });
+  var nVerif = l.filter(function (m) { return m.aVerifier; }).length;
+  if (!nVerif) f.verif = false;
+  var list = l.filter(function (m) {
+    if (f.verif && !m.aVerifier) return false;
+    if (f.marque && m.marque !== f.marque) return false;
+    if (f.appareil && m.appareil !== f.appareil) return false;
+    if (q && (m.marque + m.modele + m.gamme + m.type + m.fluide).toLowerCase().replace(/\s+/g, '').indexOf(q) < 0) return false;
+    return true;
+  });
+  var h = msgBox() + '<div class="search">' + ICON.search + '<input type="search" data-bind="mf.q" data-rerender="1" value="' + esc(f.q) + '" placeholder="Modèle, gamme, fluide…" aria-label="Rechercher une machine"></div>' +
+    '<div class="g2"><label>Marque<select data-bind="mf.marque" data-rerender="1"><option value="">Toutes</option>' + marques.sort().map(function (x) { return '<option' + (x === f.marque ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select></label>' +
+    '<label>Type d’appareil<select data-bind="mf.appareil" data-rerender="1"><option value="">Tous</option>' + app.sort().map(function (x) { return '<option' + (x === f.appareil ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select></label></div>';
+  if (isAdmin() && nVerif) h += chips([['', 'Toutes (' + l.length + ')'], ['1', 'À vérifier (' + nVerif + ')']], f.verif ? '1' : '', 'machVerif');
+  h += '<div class="note">' + list.length + ' modèle' + (list.length > 1 ? 's' : '') + '. Touche un modèle pour voir ses caractéristiques.</div>';
+  h += list.slice(0, 120).map(function (m) {
+    var open = S.machOpen === m.row;
+    var row = function (k, v, u) { return v ? '<div class="row"><span>' + k + '</span><span>' + esc(v) + (u ? ' ' + u : '') + '</span></div>' : ''; };
+    return '<div class="item" style="cursor:default"><button type="button" data-act="machToggle" data-arg="' + m.row + '" aria-expanded="' + open + '" style="all:unset;cursor:pointer;display:flex;flex-direction:column;gap:4px">' +
+      '<span class="top"><span class="chips" style="gap:6px"><span class="badge">' + esc(m.marque) + '</span>' + (m.fluide && !/^na$/i.test(m.fluide) ? '<span class="badge grey">' + esc(m.fluide) + '</span>' : '') + '</span>' +
+      (m.aVerifier ? '<span class="badge warn">À vérifier</span>' : '<span class="note">' + esc(m.appareil) + '</span>') + '</span>' +
+      '<span style="font-size:17px;font-weight:700">' + esc(m.modele) + '</span><span class="note">' + esc([m.gamme, m.type].filter(Boolean).join(' · ')) + '</span></button>' +
+      (open ? '<div class="rows" style="margin-top:8px">' + row('Type d’appareil', m.appareil) + row('Alimentation', m.alimentation) + row('Liaisons', m.liaisons) + row('Fluide', m.fluide) +
+        row('Charge usine', m.charge, 'kg') + row('Longueur préchargée', m.precharge, 'm') + row('Charge supplémentaire', m.gpm, 'g/m') + row('Longueur max UE-UI', m.lmax, 'm') +
+        row('Source', m.source) + row('Remarque', m.remarque) + '</div>' : '') +
+      (m.aVerifier ? '<div class="msg info" style="margin:8px 0 0">' + (m.nouveau ? 'Nouveau modèle ajouté depuis l’appli. ' : '') + esc(m.propositions.join(' · ') || m.aVerifier) + '</div>' +
+        (isAdmin() ? '<div class="g2" style="margin-top:8px"><button class="btn out" style="min-height:46px" data-act="machRefuse" data-arg="' + m.row + '">' + (m.nouveau ? 'Retirer de la base' : 'Refuser') + '</button>' +
+          '<button class="btn" style="min-height:46px" data-act="machAccept" data-arg="' + m.row + '">' + (m.nouveau ? 'Garder le modèle' : 'Accepter') + '</button></div>' : '') : '') + '</div>';
+  }).join('');
+  if (list.length > 120) h += '<div class="note center">Affine la recherche pour voir les ' + (list.length - 120) + ' autres modèles.</div>';
+  h += '<div class="note">' + (isAdmin() ? 'Accepter met la base à jour avec la proposition de l’opérateur ; Refuser la laisse telle quelle. La base reste modifiable dans l’onglet Machines du tableur.' : 'Les modèles ajoutés ou modifiés depuis un chantier sont vérifiés par l’administrateur.') + '</div>';
+  return h;
+};
+
+/* ---------- Registre des mouvements */
+function regPeriod(k) {
+  var n = new Date(), y = n.getFullYear(), m = n.getMonth(), q = Math.floor(m / 3), iso = function (d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  if (k === 'annee') return [y + '-01-01', iso(n)];
+  if (k === 'anneePrec') return [(y - 1) + '-01-01', (y - 1) + '-12-31'];
+  if (k === 'trim') return [iso(new Date(y, q * 3, 1)), iso(n)];
+  if (k === 'trimPrec') { var s0 = new Date(y, q * 3 - 3, 1); return [iso(s0), iso(new Date(s0.getFullYear(), s0.getMonth() + 3, 0))]; }
+  return null;
+}
+V.registre = function () {
+  var r = S.reg;
+  return msgBox() + '<div class="card"><div class="note">Période</div>' +
+    chips([['trim', 'Ce trimestre'], ['trimPrec', 'Trimestre précédent'], ['annee', 'Cette année'], ['anneePrec', 'Année dernière']], r.k, 'regPeriode') +
+    '<div class="g2"><label>Du<input type="date" data-bind="reg.du" data-rerender="1" value="' + esc(r.du) + '"></label><label>Au<input type="date" data-bind="reg.au" data-rerender="1" value="' + esc(r.au) + '"></label></div>' +
+    '<div class="rows" style="padding:0 4px"><div class="row"><span>Opérations sur la période</span><span id="regN">' + (r.apercu ? r.apercu.n + ' · ' + r.apercu.kg + ' kg' : '…') + '</span></div></div></div>' +
+    (r.files || []).map(function (f) { return '<a class="btn out" style="text-decoration:none" target="_blank" rel="noopener" href="' + esc(f.url) + '">Ouvrir ' + esc(f.name) + '</a>'; }).join('') +
+    '<div class="g2"><button class="btn" data-act="regExport" data-arg="pdf"' + (S.busy ? ' disabled' : '') + '>' + ICON.doc + 'Exporter en PDF</button>' +
+    '<button class="btn" data-act="regExport" data-arg="xlsx"' + (S.busy ? ' disabled' : '') + '>' + ICON.doc + 'Exporter en Excel</button></div>' +
+    '<div class="note">Toutes les manipulations de la période : date, opération, chantier, machine, fluide, quantité, bouteille, charge totale, t éq. CO₂, opérateur et n° de CERFA. Les fichiers sont rangés dans le Drive (ARE Fluides › Registre). Pratique pour un audit ou pour l’historique d’une machine.</div>';
+};
+function regApercu() {
+  var r = S.reg; if (!r.du || !r.au) return;
+  call('registreApercu', { du: isoToFr(r.du), au: isoToFr(r.au) }).then(function (x) { r.apercu = x; var el = document.getElementById('regN'); if (el) el.textContent = x.n + ' · ' + x.kg + ' kg'; }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
+}
+
+/* ---------- Réglages */
+V.reglages = function () {
+  var r = S.regl;
+  if (!r) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
+  return msgBox() + '<div class="sec">Envoi des documents au client</div><div class="card">' + chips([['1', 'Activé'], ['', 'Désactivé']], r.envoiClient ? '1' : '', 'reglEnvoi') +
+    '<div class="note">Activé : un champ « E-mail du client » apparaît sur la fiche chantier, et un bouton « Envoyer au client » envoie le rapport d’installation et les CERFA en pièces jointes, depuis le compte Google de l’appli.</div></div>' +
+    '<div class="sec">E-mails d’alerte</div><div class="card">' + chips([['1', 'Activés'], ['', 'Désactivés']], r.alertesEmail ? '1' : '', 'reglAlertes') +
+    field('Adresse qui reçoit les alertes (vide = comptes administrateur)', 'regl.emailAlertes', { type: 'email' }) +
+    '<button class="btn out" data-act="saveReglEmail">Enregistrer l’adresse</button>' +
+    '<div class="note">Un e-mail par jour (vers 7 h) s’il y a de nouvelles alertes : bouteille neuve presque vide, bouteille de récupération presque pleine, contrôle de détecteur à faire dans les 30 jours ou dépassé. Rappel chaque semaine tant que ce n’est pas réglé. Pour démarrer l’envoi : lancer une fois la fonction <b>activerAlertesEmail</b> dans Apps Script.</div></div>';
+};
+
+/* ---------- Envoi au client (fiche chantier) */
+function envoiClientBlock(c) {
+  if (!S.summary || !S.summary.envoiClient || !S.ctx || !S.ctx.mes || !ownsChantier(c)) return '';
+  var e = S.envoi && S.envoi.id === c.id ? S.envoi : (S.envoi = { id: c.id, email: c.email || '' });
+  return '<div class="sec">Envoyer au client</div><div class="card">' + field('E-mail du client', 'envoi.email', { type: 'email', ph: 'client@exemple.fr' }) +
+    '<button class="btn" data-act="envoyerClient"' + (S.busy ? ' disabled' : '') + '>' + ICON.mail + 'Envoyer le rapport et les CERFA</button>' +
+    (c.docsEnvoyes ? '<div class="note">Déjà envoyés ' + esc(c.docsEnvoyes) + '.</div>' : '') + '</div>';
+}
+
+/* ---------- Pesée de contrôle (fiche bouteille) */
+function controleBlock(b) {
+  if (b.statut === 'rendue') return '';
+  var p = S.pc && S.pc.ref === b.ref ? S.pc : null, res = S.pcRes && S.pcRes.ref === b.ref ? S.pcRes : null;
+  var h = '<div class="sec">Pesée de contrôle</div><div class="card">';
+  if (!p && !res) return h + '<button class="btn out" data-act="pcOpen">' + ICON.scale + 'Faire une pesée de contrôle</button><div class="note">Peser la bouteille seule (sans accessoires) de temps en temps, par exemple chaque trimestre, pour vérifier que le stock suit.</div></div>';
+  if (res) {
+    if (res.conforme) return h + '<div class="msg ok" style="margin:0">Pesée du ' + esc(res.date) + ' conforme : ' + esc(res.pesee) + ' kg (attendu ' + esc(res.attendu || '—') + ' kg).</div><button class="btn ghost" data-act="pcClose">Fermer</button></div>';
+    h += '<div class="msg err" style="margin:0">La bouteille pèse ' + esc(res.pesee) + ' kg au lieu de ' + esc(res.attendu) + ' kg attendus : écart de ' + esc(res.ecartTxt) + '.</div>';
+    if (!res.possible) return h + '<div class="note">Ce type de bouteille ne permet pas de régulariser cet écart par une manipulation : vérifie la pesée ou corrige-la dans « Modifier les caractéristiques ».</div><button class="btn ghost" data-act="pcClose">Fermer</button></div>';
+    h += '<div class="note">Pour régulariser, rattache l’écart à un chantier : une manipulation « ' + (res.op === 'ajout' ? 'Ajout de charge' : 'Récupération') + ' » de ' + esc(res.quantite) + ' kg sera préparée avec cette bouteille.</div>' +
+      '<div class="search">' + ICON.search + '<input type="search" data-bind="pcQ" data-rerender="1" value="' + esc(S.pcQ || '') + '" placeholder="Chercher le chantier (client, ville…)" aria-label="Chercher le chantier"></div>';
+    var q = String(S.pcQ || '').toLowerCase();
+    var l = (S.chantiers || []).filter(function (c) { return !q || (c.client + ' ' + c.ville + ' ' + c.projet + ' ' + c.modele).toLowerCase().indexOf(q) >= 0; }).slice(0, 6);
+    h += l.map(function (c) { return '<button class="item" data-act="regulPick" data-arg="' + esc(c.id) + '" style="padding:12px 14px"><b>' + esc(c.client || 'Sans nom') + '</b><span class="note">' + esc([c.ville, [c.marque, c.modele].filter(Boolean).join(' ')].filter(Boolean).join(' · ')) + '</span></button>'; }).join('') +
+      '<button class="btn out" data-act="regulNew">' + ICON.plus + 'Nouveau chantier</button><button class="btn ghost" data-act="pcClose">Plus tard</button></div>';
+    return h;
+  }
+  return h + '<div class="g2">' + field('Pesée bouteille seule (kg)', 'pc.pesee', { mode: 'decimal' }) + '<label>Date<input type="date" max="' + todayIso() + '" data-bind="pc.date" value="' + esc(p.date) + '"></label></div>' +
+    '<div class="note">Dernière pesée enregistrée : ' + esc(b.pesee || '—') + ' kg. Écart toléré : 10 g.</div>' +
+    '<div class="g2"><button class="btn out" data-act="pcClose">Annuler</button><button class="btn" data-act="pcSave"' + (S.busy ? ' disabled' : '') + '>Comparer</button></div></div>';
+}
+function applyRegul() {
+  var rg = S.regul; if (!rg || !S.ctx) return;
+  S.regul = null;
+  S.mes = newMesState(!!S.ctx.mes);
+  var d = S.mes.d;
+  d.op = rg.op; d.bouteille = rg.ref; d.mode = 'direct'; d.quantite = rg.quantite; d.poidsSeule = rg.pesee; d.date = rg.date; d.nature = ['maintenance'];
+  S.mes.regulId = rg.id;
+  S.stack = [listScreen(), 'chantier']; S.screen = 'mes';
+  S.msg = { text: 'Régularisation de la pesée de contrôle : ' + (rg.op === 'ajout' ? 'ajout de charge' : 'récupération') + ' de ' + rg.quantite + ' kg avec ' + rg.ref + ', préremplie. Vérifie chaque étape.' };
+  render(); window.scrollTo(0, 0);
+}
+
+/* ---------- CERFA papier */
+V.cerfa = function () {
+  var cp = S.cp;
+  var inputs = '<input type="file" id="cerfaCam" accept="image/*" capture="environment" class="hidden"><input type="file" id="cerfaFile" accept="image/*,application/pdf" class="hidden">';
+  if (cp.reading) return msgBox() + '<div class="card" style="flex-direction:row;align-items:center;gap:14px"><div class="spin" style="margin:0;flex:0 0 auto"></div><div><b>Lecture du CERFA…</b><div class="note">10 à 30 secondes, garde l’appli ouverte.</div></div></div>' + inputs;
+  if (!cp.f) return msgBox() + '<div class="card"><b>CERFA rempli à la main</b><div class="note">Photographie la fiche bien à plat (toute la page), ou choisis un PDF. L’appli lit les informations, te propose le chantier correspondant et enregistre la manipulation dans le registre.</div>' +
+    '<button class="btn" data-act="photoMenu" data-arg="cerfa|">' + ICON.camera + 'Photo ou PDF du CERFA</button></div>' + inputs;
+  var f = cp.f, needB = f.op === 'ajout' || f.op === 'recup';
+  var fl = normModele(f.fluide), all = (S.bt ? S.bt.bouteilles : []).filter(function (b) { return b.statut !== 'rendue' && (f.op === 'ajout' ? b.kind !== 'recup' : b.kind !== 'neuve'); });
+  var cur = all.filter(function (b) { return b.ref === f.bouteille; })[0];
+  var badDate = cur && cur.derniereOp && f.date && f.date < frToIso(cur.derniereOp);
+  var h = msgBox() + '<div class="msg info">Vérifie chaque information lue sur le CERFA avant d’enregistrer.</div>' +
+    '<div class="sec">Fiche</div><div class="card"><div class="g2">' + field('N° du CERFA *', 'cp.f.numero') + '<label>Date de l’intervention *<input type="date" max="' + todayIso() + '" data-bind="cp.f.date" data-rerender="1" value="' + esc(f.date) + '"></label></div></div>' +
+    '<div class="sec">Chantier</div><div class="card">';
+  h += (f.propositions || []).map(function (p) {
+    var on = cp.chantierId === p.id;
+    return '<button type="button" class="item" data-act="cpChantier" data-arg="' + esc(p.id) + '" style="padding:12px 14px;border:' + (on ? '2px solid var(--green)' : '1.5px solid var(--line)') + '"><span class="top"><b>' + esc(p.client) + '</b><span class="badge' + (on ? '' : ' grey') + '">' + (on ? 'Choisi' : 'Choisir') + '</span></span>' +
+      '<span class="note">' + esc([p.adresse, p.machine].filter(Boolean).join(' · ')) + '</span><span class="note" style="color:var(--green)">' + esc(p.raison) + '</span></button>';
+  }).join('') +
+    '<button type="button" class="item" data-act="cpChantier" data-arg="" style="padding:12px 14px;border:' + (!cp.chantierId ? '2px solid var(--green)' : '1.5px solid var(--line)') + '"><span class="top"><b>Nouveau chantier</b><span class="badge' + (!cp.chantierId ? '' : ' grey') + '">' + (!cp.chantierId ? 'Choisi' : 'Choisir') + '</span></span><span class="note">Créé avec les informations du CERFA ci-dessous.</span></button>';
+  if (!(f.propositions || []).length) h += '<div class="note">Aucun chantier existant ne ressemble à ce CERFA.</div>';
+  if (!cp.chantierId) h += field('Client (détenteur) *', 'cp.f.client') + field('Adresse', 'cp.f.adresse') + '<div class="g2">' + field('Code postal', 'cp.f.cp', { mode: 'numeric' }) + field('Ville', 'cp.f.ville') + '</div>' +
+    '<div class="g2">' + field('Marque', 'cp.f.marque') + field('Modèle', 'cp.f.modele') + '</div>' + field('N° de série', 'cp.f.serie');
+  h += '</div><div class="sec">Manipulation</div><div class="card"><div class="g2">' + field('Fluide', 'cp.f.fluide', { ph: 'R32' }) + field('Charge totale (kg)', 'cp.f.chargeTotale', { mode: 'decimal' }) + '</div>' +
+    chips([['ajout', 'Ajout de charge'], ['recup', 'Récupération'], ['autre', 'Sans fluide transvasé']], f.op, 'cpOp');
+  if (needB) {
+    h += field('Quantité ' + (f.op === 'ajout' ? 'chargée' : 'récupérée') + ' (kg) *', 'cp.f.quantite', { mode: 'decimal' }) +
+      '<label>Bouteille utilisée *<select data-bind="cp.f.bouteille" data-rerender="1"><option value="">Choisir…</option>' + all.map(function (b) {
+        var ok = !b.fluide || normModele(b.fluide) === fl;
+        return '<option value="' + esc(b.ref) + '"' + (b.ref === f.bouteille ? ' selected' : '') + (ok ? '' : ' disabled') + '>' + esc(b.ref + (b.fluide ? ' · ' + b.fluide : ' · vide') + (b.reste ? ' · reste ' + b.reste + ' kg' : '') + (ok ? '' : ' (autre fluide)')) + '</option>';
+      }).join('') + '</select></label>' +
+      (cur ? '<div class="note">Dernière pesée ' + esc(cur.pesee || '—') + ' kg' + (cur.derniereOp ? ', dernière opération le ' + esc(cur.derniereOp) : '') + '.</div>' : '') +
+      (badDate ? '<div class="msg err">La date du CERFA est antérieure à la dernière opération de cette bouteille (' + esc(cur.derniereOp) + ') : ce n’est pas possible. Indique une nouvelle date (à partir du ' + esc(cur.derniereOp) + ') ou choisis une autre bouteille.</div>' : '') +
+      field('Pesée de la bouteille seule après (kg, si connue)', 'cp.f.poidsSeule', { mode: 'decimal', ph: 'Sinon calculée : dernière pesée ∓ quantité' });
+  }
+  h += '</div><button class="btn" data-act="cpSave"' + (S.busy || badDate ? ' disabled' : '') + '>Enregistrer le CERFA</button><button class="btn ghost" data-act="cpReset">Recommencer avec une autre photo</button>' + inputs;
+  return h;
+};
+
+Object.assign(A, {
+  goMachines: function () { S.machs = null; S.mf = S.mf || { q: '', marque: '', appareil: '', verif: false }; S.machOpen = null; go('machines'); call('machinesBase').then(function (l) { S.machs = l; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
+  machToggle: function (row) { S.machOpen = S.machOpen === +row ? null : +row; render(); },
+  machVerif: function (v) { S.mf.verif = !!v; render(); },
+  machAccept: function (row) { var m = S.machs.filter(function (x) { return x.row === +row; })[0]; run(call('validateMachine', { row: m.row, modele: m.modele, action: 'accept' })).then(function (r) { S.machs = r.list; S.msg = { text: r.msg }; render(); }); },
+  machRefuse: function (row) {
+    var m = S.machs.filter(function (x) { return x.row === +row; })[0];
+    S.dialog = { text: m.nouveau ? 'Retirer ' + m.modele + ' de la base machines ?' : 'Refuser la proposition pour ' + m.modele + ' ?', note: m.nouveau ? 'Une copie est gardée dans l’onglet masqué « _Machines supprimées ».' : 'La base reste telle quelle.', yes: 'machRefuseOk', yesLabel: m.nouveau ? 'Oui, retirer' : 'Oui, refuser' };
+    S.dialogArg = m; render();
+  },
+  machRefuseOk: function () { var m = S.dialogArg; S.dialog = null; run(call('validateMachine', { row: m.row, modele: m.modele, action: 'refuse' })).then(function (r) { S.machs = r.list; S.msg = { text: r.msg }; render(); }); },
+  goRegistre: function () { var p = regPeriod('anneePrec'); S.reg = { k: 'anneePrec', du: p[0], au: p[1], apercu: null, files: [] }; go('registre'); regApercu(); },
+  regPeriode: function (k) { var p = regPeriod(k); S.reg.k = k; S.reg.du = p[0]; S.reg.au = p[1]; S.reg.apercu = null; render(); regApercu(); },
+  regExport: function (fmt) {
+    var r = S.reg;
+    run(call('exportRegistre', { du: isoToFr(r.du), au: isoToFr(r.au), format: fmt }), 'Registre exporté dans le Drive.').then(function (x) { r.files = (r.files || []).filter(function (f) { return f.name !== x.name; }).concat([x]); render(); });
+  },
+  goReglages: function () { S.regl = null; go('reglages'); call('reglages').then(function (r) { S.regl = r; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
+  reglEnvoi: function (v) { run(call('saveReglages', { envoiClient: !!v }), v ? 'Envoi au client activé.' : 'Envoi au client désactivé.').then(function (r) { S.regl = r; if (S.summary) S.summary.envoiClient = r.envoiClient; render(); }); },
+  reglAlertes: function (v) { run(call('saveReglages', { alertesEmail: !!v }), v ? 'E-mails d’alerte activés.' : 'E-mails d’alerte désactivés.').then(function (r) { S.regl = r; render(); }); },
+  saveReglEmail: function () { run(call('saveReglages', { emailAlertes: S.regl.emailAlertes }), 'Adresse enregistrée.').then(function (r) { S.regl = r; render(); }); },
+  envoyerClient: function () {
+    var c = S.cur;
+    run(call('envoyerClient', { chantierId: c.id, email: S.envoi.email })).then(function (r) { S.msg = { text: r.msg }; c.docsEnvoyes = r.trace; c.email = S.envoi.email; render(); window.scrollTo(0, 0); });
+  },
+  pcOpen: function () { S.pc = { ref: S.btD.ref, pesee: '', date: todayIso() }; S.pcRes = null; render(); },
+  pcClose: function () { S.pc = null; S.pcRes = null; render(); },
+  pcSave: function () {
+    var p = S.pc;
+    run(call('peseeControle', { ref: p.ref, pesee: p.pesee, date: isoToFr(p.date) })).then(function (r) {
+      S.pc = null; S.pcRes = r; S.pcQ = '';
+      if (!S.loaded) loadChantiers();
+      render();
+    });
+  },
+  regulPick: function (id) {
+    var r = S.pcRes; S.regul = { ref: r.ref, op: r.op, quantite: r.quantite, pesee: r.pesee, date: frToIso(r.date), id: r.id }; S.pcRes = null;
+    S.cur = S.chantiers.filter(function (c) { return c.id === id; })[0]; S.listScreen = 'chantiers'; S.ctx = null;
+    S.stack = ['chantiers']; S.screen = 'chantier'; render();
+    loadMes().then(applyRegul).catch(function (e) { S.msg = { err: true, text: e.message }; render(); });
+  },
+  regulNew: function () {
+    var r = S.pcRes; S.regul = { ref: r.ref, op: r.op, quantite: r.quantite, pesee: r.pesee, date: frToIso(r.date), id: r.id }; S.pcRes = null;
+    S.listScreen = 'chantiers'; S.stack = ['chantiers']; S.screen = 'chantiers';
+    S.form = emptyForm(); if (isAdmin()) S.form.responsable = S.user.id; loadOpsList(); go('chantierForm');
+    S.msg = { text: 'Crée le chantier : la manipulation de régularisation s’ouvrira ensuite.' }; render();
+  },
+  goCerfa: function () { S.cp = { f: null, reading: false, chantierId: '', data: '', mime: '' }; go('cerfa'); if (!S.bt) call('listBouteilles').then(function (x) { S.bt = x; }).catch(function () {}); },
+  cpReset: function () { A.goCerfa(); S.stack.pop(); },
+  cpChantier: function (id) { S.cp.chantierId = id; render(); },
+  cpOp: function (op) { var f = S.cp.f; f.op = op; f.quantite = op === 'ajout' ? (f.chargee || f.quantite) : op === 'recup' ? (f.recuperee || f.quantite) : ''; f.bouteille = ''; render(); },
+  cpSave: function () {
+    var cp = S.cp, f = cp.f;
+    var d = { numero: f.numero, date: isoToFr(f.date), chantierId: cp.chantierId, client: f.client, adresse: f.adresse, cp: f.cp, ville: f.ville, marque: f.marque, modele: f.modele, serie: f.serie,
+      fluide: f.fluide, chargeTotale: f.chargeTotale, nature: f.nature, fuite: f.fuite, operateur: f.operateur, op: f.op, quantite: f.quantite, bouteille: f.bouteille, poidsSeule: f.poidsSeule, data: cp.data, mime: cp.mime };
+    run(call('saveCerfaPapier', d)).then(function (r) {
+      S.msg = { text: r.msg }; S.cp = null; S.cur = r.chantier; S.ctx = null; S.listScreen = 'chantiers'; S.stack = ['chantiers']; S.screen = 'chantier';
+      call('listChantiers').then(function (l) { S.chantiers = l; }).catch(function () {});
+      call('listBouteilles').then(function (x) { S.bt = x; }).catch(function () {});
+      render(); window.scrollTo(0, 0); loadMes().catch(function () {});
+    });
+  }
+});
+
+document.addEventListener('change', function (e) {
+  var id = e.target.id;
+  if (id !== 'cerfaCam' && id !== 'cerfaFile') return;
+  var file = e.target.files && e.target.files[0];
+  if (!file || !S.cp) return;
+  S.cp.reading = true; S.msg = null; render();
+  fileToPayload(file, 2400).then(function (p) {
+    S.cp.data = p.data; S.cp.mime = p.mime;
+    return call('readCerfaPapier', { data: p.data, mime: p.mime });
+  }).then(function (lu) {
+    var f = lu; f.date = frToIso(lu.date) || '';
+    f.op = lu.chargee ? 'ajout' : lu.recuperee ? 'recup' : 'autre';
+    f.quantite = lu.chargee || lu.recuperee || ''; f.bouteille = ''; f.poidsSeule = '';
+    S.cp.f = f; S.cp.reading = false; S.cp.chantierId = (lu.propositions && lu.propositions[0]) ? lu.propositions[0].id : '';
+    S.msg = { text: 'CERFA lu' + (lu.propositions && lu.propositions.length ? ' : ' + lu.propositions.length + ' chantier' + (lu.propositions.length > 1 ? 's' : '') + ' proposé' + (lu.propositions.length > 1 ? 's' : '') : ' : aucun chantier existant ne correspond') + '.' };
+    render(); window.scrollTo(0, 0);
+  }).catch(function (err) { S.cp.reading = false; S.msg = { err: true, text: err.message }; render(); });
+});
+document.addEventListener('change', function (e) {
+  var p = e.target.getAttribute && e.target.getAttribute('data-bind');
+  if ((p === 'reg.du' || p === 'reg.au') && S.reg) { S.reg.k = ''; S.reg.apercu = null; setTimeout(regApercu, 0); }
+});
+
 /* ============================== Événements ============================== */
 document.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]');

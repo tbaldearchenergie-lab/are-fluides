@@ -24,7 +24,7 @@ function doGet() {
 /** Point d'entrée unique appelé par l'interface. */
 function api(req) {
   try {
-    req = req || {};
+    req = req || {}; OP_NAMES_ = null;
     var action = req.action, data = req.data || {};
     var pub = { status: status_, setup: setup_, login: login_, resume: resume_ };
     if (pub[action]) return ok_(pub[action](data));
@@ -72,6 +72,18 @@ function api(req) {
       listDistributeurs: function () { return distributeurs_(); },
       saveDistributeur: function (d) { admin_(user); return saveDistributeur_(d, user); },
       declaration: function (d) { admin_(user); return declaration_(d); },
+      // Livraison 4
+      reglages: function () { return reglages_(); },
+      saveReglages: function (d) { admin_(user); return saveReglages_(d); },
+      machinesBase: function () { return machinesBase_(); },
+      validateMachine: function (d) { admin_(user); return validateMachine_(d, user); },
+      registreApercu: function (d) { admin_(user); return registreApercu_(d); },
+      exportRegistre: function (d) { admin_(user); return exportRegistre_(d); },
+      alertes: function () { return alertes_(); },
+      peseeControle: function (d) { return peseeControle_(d, user); },
+      envoyerClient: function (d) { return envoyerClient_(d, user); },
+      readCerfaPapier: function (d) { return readCerfaPapier_(d); },
+      saveCerfaPapier: function (d) { return saveCerfaPapier_(d, user); },
       exportDeclaration: function (d) { admin_(user); return d.format === 'xlsx' ? exportDeclarationXlsx_(d) : exportDeclaration_(d); }
     };
     if (!priv[action]) throw new Error('Action inconnue : ' + action);
@@ -468,12 +480,24 @@ function chantierFromRow_(r, gwps) {
   if (g === '' || g === 'saisir' || /^#/.test(String(g)) || !isFinite(Number(g))) g = (gwps || gwpMap_())[normFluide_(o.fluide)] || '';
   o.gwp = g === '' ? '' : String(g).replace('.', ',');
   o.creePar = String(r['Créé par'] || '');
+  // Responsable du chantier : désigné par l'admin, sinon celui qui l'a créé. Il a les droits du créateur.
+  o.responsable = String(r['Responsable'] || '') || o.creePar;
+  o.responsableNom = opNames_()[o.responsable] || '';
+  o.docsEnvoyes = String(r['Documents envoyés'] || '');
   o.client = (o.prenom ? o.prenom + ' ' : '') + o.nom;
   o.misEnService = !!o.dateMes;
   // Année du chantier : année de mise en service, sinon année de création, sinon année en cours (chantier à mettre en service)
   var an = function (v) { var m = String(v || '').match(/(\d{4})/); return m ? m[1] : ''; };
   o.annee = an(o.dateMes) || an(r['Créé le']) || String(new Date().getFullYear());
   return o;
+}
+
+var OP_NAMES_ = null;   // noms des comptes, lus une fois par appel
+function opNames_() {
+  if (OP_NAMES_) return OP_NAMES_;
+  OP_NAMES_ = {};
+  try { readTable_(SH.ops).rows.forEach(function (o) { OP_NAMES_[o['ID']] = ((o['Prénom'] || '') + ' ' + (o['Nom'] || '')).trim(); }); } catch (e) {}
+  return OP_NAMES_;
 }
 
 function listChantiers_() {
@@ -495,16 +519,24 @@ function saveChantier_(d, user) {
     ensureColumn_(SH.chantiers, 'Charge usine (kg)');
     ensureColumn_(SH.chantiers, 'Créé par');
     ensureColumn_(SH.chantiers, 'Créé le');
+    ensureColumn_(SH.chantiers, 'Responsable');
     var t = readTable_(SH.chantiers);
     var row = d.id ? t.rows.filter(function (r) { return r['ID'] === d.id; })[0] : null;
     if (d.id && !row) throw new Error('Chantier introuvable.');
-    if (row && user && user.role !== 'admin' && String(row['Créé par'] || '') !== user.id) throw new Error('Tu ne peux modifier que les chantiers que tu as créés.');
+    if (row && user && user.role !== 'admin' && (String(row['Responsable'] || '') || String(row['Créé par'] || '')) !== user.id) throw new Error('Tu ne peux modifier que les chantiers dont tu es responsable.');
     var rec = {};
     Object.keys(CH_FIELDS).forEach(function (k) { if (k !== 'id' && d[k] !== undefined) rec[CH_FIELDS[k]] = d[k]; });
     if (!row) {
       rec['ID'] = nextId_(t.rows.concat(corbeille_().rows), 'C', 'ID');   // jamais réutiliser l'ID d'un chantier supprimé
-      if (user) rec['Créé par'] = user.id;
+      if (user) { rec['Créé par'] = user.id; rec['Responsable'] = user.id; }
       rec['Créé le'] = new Date();
+    }
+    // Seul l'admin désigne ou change le responsable (un opérateur actif ou lui-même)
+    if (user && user.role === 'admin' && d.responsable) {
+      var op = readTable_(SH.ops).rows.filter(function (o) { return o['ID'] === d.responsable; })[0];
+      if (!op) throw new Error('Responsable inconnu.');
+      if (String(op['Actif'] || 'oui').toLowerCase() === 'non') throw new Error('Ce compte est désactivé : choisis un autre responsable.');
+      rec['Responsable'] = d.responsable;
     }
     var r = writeRow_(t, rec, row ? row._row : null);
     // GWP : valeur saisie à la main si fournie, sinon valeur de l'onglet Fluides (écrite en nombre, sans formule)
@@ -537,7 +569,7 @@ function upsertMachine_(d, user, chantierId) {
   var modele = String(d.modele || '').trim(), marque = String(d.marque || '').trim();
   if (!modele || !marque) return '';
   ensureSheet_(SH.machines, MACH_COLS);
-  ensureColumn_(SH.machines, 'Source'); ensureColumn_(SH.machines, 'À vérifier');
+  ensureColumn_(SH.machines, 'Source'); ensureColumn_(SH.machines, 'À vérifier'); ensureColumn_(SH.machines, 'Propositions (JSON)');
   var t = readTable_(SH.machines), k = normModele_(modele);
   var row = t.rows.filter(function (r) { return normModele_(r['Modèle'] || r['Modèle UE']) === k; })[0];
   var admin = user && user.role === 'admin';
@@ -559,7 +591,8 @@ function upsertMachine_(d, user, chantierId) {
       'Liaisons': (pre !== '' && pre > 0) || (gpm !== '' && gpm > 0) ? 'Frigorifique' : '',
       'Fluide': val('fluide'), 'Charge usine (kg)': val('chargeUsine'), 'Longueur préchargée (m)': pre, 'Charge supplémentaire (g/m)': gpm,
       'Source': 'Ajouté depuis l’appli par ' + qui + ' le ' + quand + (chantierId ? ' (chantier ' + chantierId + ')' : ''),
-      'À vérifier': admin ? '' : 'Nouveau modèle ajouté par ' + qui + ' le ' + quand };
+      'À vérifier': admin ? '' : 'Nouveau modèle ajouté par ' + qui + ' le ' + quand,
+      'Propositions (JSON)': admin ? '' : JSON.stringify([{ nouveau: true, par: qui, date: quand }]) };
     writeRow_(t, rec, null);
     return admin ? 'Modèle ' + modele + ' ajouté à la base machines.' : 'Modèle ' + modele + ' ajouté à la base machines (l’administrateur vérifiera ses données).';
   }
@@ -577,7 +610,10 @@ function upsertMachine_(d, user, chantierId) {
     writeRow_(t, up, row._row);
     return 'Base machines mise à jour pour ' + row['Modèle'] + ' : ' + changes.join(', ') + '.';
   }
-  writeRow_(t, { 'À vérifier': (String(row['À vérifier'] || '') + (row['À vérifier'] ? ' · ' : '') + qui + ' propose le ' + quand + ' : ' + changes.join(', ')).slice(0, 1000) }, row._row);
+  var props = []; try { props = JSON.parse(row['Propositions (JSON)'] || '[]'); } catch (e) { props = []; }
+  props.push({ par: qui, date: quand, up: up, texte: changes.join(', ') });
+  writeRow_(t, { 'À vérifier': (String(row['À vérifier'] || '') + (row['À vérifier'] ? ' · ' : '') + qui + ' propose le ' + quand + ' : ' + changes.join(', ')).slice(0, 1000),
+    'Propositions (JSON)': JSON.stringify(props).slice(0, 20000) }, row._row);
   return 'Proposition envoyée : l’administrateur validera la mise à jour de ' + row['Modèle'] + ' dans la base machines.';
 }
 
@@ -607,7 +643,7 @@ function deleteChantier_(d, user) {
     var mouv = [];
     try { mouv = readTable_(SH.mouv).rows; } catch (e) { mouv = []; }
     if (mouv.some(function (m) { return String(m['ID chantier'] || '').trim() === d.id || String(m['Chantier / Client'] || '').trim() === d.id; })) throw new Error('Ce chantier a des opérations sur le fluide : il ne peut pas être supprimé.');
-    if (user.role !== 'admin' && String(row['Créé par'] || '') !== user.id) throw new Error('Tu ne peux supprimer que les chantiers que tu as créés.');
+    if (user.role !== 'admin' && (String(row['Responsable'] || '') || String(row['Créé par'] || '')) !== user.id) throw new Error('Tu ne peux supprimer que les chantiers dont tu es responsable.');
     var c = corbeille_();
     var rec = {};
     t.headers.forEach(function (h) { if (h) rec[h] = row[h]; });
@@ -858,9 +894,9 @@ function today_() { return Utilities.formatDate(new Date(), Session.getScriptTim
  *  Sur le chantier d'un autre, un opérateur peut consulter, ajouter des manipulations et compléter les n° de série absents. */
 function canEditMes_(c, mesRow, user) {
   if (user.role === 'admin') return true;
-  return !!(c && c.creePar && c.creePar === user.id);
+  return !!(c && c.responsable && c.responsable === user.id);
 }
-var DROITS_MSG = 'Seul l’opérateur qui a créé ce chantier ou un administrateur peut faire cette modification.';
+var DROITS_MSG = 'Seul le responsable du chantier ou un administrateur peut faire cette modification.';
 
 /* ---------- Outillage, bouteilles, distributeurs */
 
@@ -880,11 +916,25 @@ function outils_() {
   });
 }
 
+/** Date de la dernière opération enregistrée sur chaque bouteille : { ref en minuscules: Date } */
+function boutDernieresOps_() {
+  var out = {};
+  try {
+    readTable_(SH.mouv).rows.forEach(function (r) {
+      var k = String(r['Bouteille'] || '').trim().toLowerCase(), dt = parseFr_(r['Date']);
+      if (k && dt && (!out[k] || dt > out[k])) out[k] = dt;
+    });
+  } catch (e) {}
+  return out;
+}
+
 function bouteilles_() {
   var t; try { t = readTable_(SH.bout); } catch (e) { return []; }
+  var last = boutDernieresOps_(), fmt = function (d) { return d ? Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd/MM/yyyy') : ''; };
   return t.rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); }).map(function (r) {
     var vide = num_(r['Poids à vide (kg)']), pesee = num_(r['Dernière pesée (kg)']);
     return {
+      derniereOp: fmt(last[String(r['Réf bouteille']).trim().toLowerCase()]), dateEntree: String(r['Date d’entrée'] || ''),
       ref: String(r['Réf bouteille']).trim(), type: String(r['Type'] || ''), fluide: normFluide_(r['Fluide']),
       vide: isFinite(vide) ? fr_(vide, 2) : '', pesee: isFinite(pesee) ? fr_(pesee, 2) : '',
       reste: isFinite(vide) && isFinite(pesee) ? fr_(pesee - vide, 2) : '',
@@ -924,7 +974,7 @@ function manipPublic_(r) {
   return {
     cerfa: String(r['N° CERFA'] || ''), op: data.op || '', label: MES.ops[data.op] || String(r['Opération'] || ''), date: String(r['Date'] || ''),
     bouteille: String(r['Bouteille'] || ''), quantite: data.quantite || '', chargeTotale: r['Charge totale machine (kg)'] === '' ? '' : fr_(num_(r['Charge totale machine (kg)']), 2),
-    lien: String(r['CERFA (lien)'] || ''), operateur: String(r['Opérateur'] || '')
+    lien: String(r['CERFA (lien)'] || ''), operateur: String(r['Opérateur'] || ''), papier: !!data.papier
   };
 }
 
@@ -1123,6 +1173,7 @@ function saveManip_(d, user) {
       }
       quantite = Math.round(quantite * 1000) / 1000;
       var bref = bouteilles_().filter(function (b) { return b.ref === d.bouteille; })[0];
+      checkDateBouteille_(bref, date);
       avant = bref ? num_(bref.pesee) : NaN;   // dernière pesée de la bouteille seule
       var attendu = isFinite(avant) ? avant + (d.op === 'ajout' ? -quantite : quantite) : NaN;
       apres = num_(d.poidsSeule);
@@ -1225,6 +1276,7 @@ function saveManip_(d, user) {
       }
     }
     out.cerfa = cerfa;
+    if (d.regulId) marquerRegularisation_(d.regulId, cerfa);
     out.fields = cerfaFields_(m);
     out.fileName = cerfaFileName_(m);
     return out;
@@ -1451,10 +1503,10 @@ function readPlate_(d) {
 var L3 = { trashBout: '_Bouteilles supprimées', declFolder: ['ARE Fluides', 'Déclarations'], opsFolder: ['ARE Fluides', 'Opérateurs'] };
 var BOUT_TYPES = { neuve: 'Neuve', recup: 'Récupération', transfert: 'Transfert' };
 var BOUT_COLS = ['Réf bouteille', 'Type', 'Fluide', 'Poids à vide (kg)', 'Poids plein à l’achat (kg)', 'Fluide initial (kg)', 'Dernière pesée (kg)', 'Fluide restant (kg)',
-  'Statut', 'Distributeur (ID)', 'Date de retour', 'N° BSFF', 'Date d’entrée', 'Fournisseur achat'];
+  'Statut', 'Distributeur (ID)', 'Date de retour', 'N° BSFF', 'Date d’entrée', 'Fournisseur achat', 'Capacité max (kg)'];
 
 function boutKind_(type) { var t = String(type || '').toLowerCase(); return /neuv|neuf/.test(t) ? 'neuve' : /transf/.test(t) ? 'transfert' : 'recup'; }
-function boutTable_() { ensureSheet_(SH.bout, BOUT_COLS); return readTable_(SH.bout); }
+function boutTable_() { ensureSheet_(SH.bout, BOUT_COLS); ensureColumn_(SH.bout, 'Capacité max (kg)'); return readTable_(SH.bout); }
 function round3_(n) { return Math.round(n * 1000) / 1000; }
 
 function bouteilleFromRow_(r, dists) {
@@ -1468,13 +1520,18 @@ function bouteilleFromRow_(r, dists) {
     resteN: isFinite(vide) && isFinite(pesee) ? Math.max(0, pesee - vide) : 0,
     statut: rendue ? 'rendue' : 'depot', statutLabel: rendue ? 'Rendue' : 'Au dépôt',
     distributeur: String(r['Distributeur (ID)'] || ''), distributeurNom: dist ? dist.nom : '', dateRetour: String(r['Date de retour'] || ''),
-    bsff: String(r['N° BSFF'] || ''), dateEntree: String(r['Date d’entrée'] || ''), fournisseur: String(r['Fournisseur achat'] || '')
+    bsff: String(r['N° BSFF'] || ''), dateEntree: String(r['Date d’entrée'] || ''), fournisseur: String(r['Fournisseur achat'] || ''),
+    capacite: kind === 'neuve' ? '' : fr_(num_(r['Capacité max (kg)']), 2)
   };
 }
 
 function listBouteilles_() {
-  var dists = distributeurs_();
-  var list = boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); }).map(function (r) { return bouteilleFromRow_(r, dists); });
+  var dists = distributeurs_(), last = boutDernieresOps_();
+  var list = boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim(); }).map(function (r) {
+    var b = bouteilleFromRow_(r, dists), lo = last[b.ref.toLowerCase()];
+    b.derniereOp = lo ? Utilities.formatDate(lo, Session.getScriptTimeZone(), 'dd/MM/yyyy') : '';
+    return b;
+  });
   // Totaux au dépôt par fluide : [{ fluide, kg }]
   var sum = function (f) {
     var by = {};
@@ -1563,6 +1620,7 @@ function saveBouteille_(d, user) {
       'Date d’entrée': dateEntree
     };
     if (d.fournisseur !== undefined) rec['Fournisseur achat'] = String(d.fournisseur || '').trim();
+    if (d.capacite !== undefined) { var cap = num_(d.capacite); rec['Capacité max (kg)'] = kind !== 'neuve' && isFinite(cap) && cap > 0 ? cap : ''; }
     if (d.distributeur !== undefined) {
       if (d.distributeur && !distributeurs_().some(function (x) { return x.id === d.distributeur; })) throw new Error('Distributeur inconnu.');
       rec['Distributeur (ID)'] = kind === 'neuve' ? '' : String(d.distributeur || '');
@@ -1711,6 +1769,8 @@ function profileSummary_(user) {
   var det = listDetecteurs_();
   var out = { annee: new Date().getFullYear() - 1, detecteursAFaire: det.filter(function (x) { return !x.ok; }).length,
     bouteillesSansTare: boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim() && !/rendu/i.test(String(r['Statut'] || '')) && !isFinite(num_(r['Poids à vide (kg)'])); }).length };
+  try { out.alertes = alertes_().map(function (x) { return { kind: x.kind, text: x.text, grave: !!x.grave }; }); } catch (e) { out.alertes = []; }
+  out.envoiClient = paramOn_('Envoi des documents au client');
   if (user.role !== 'admin') return out;
   out.machinesAVerifier = ss_().getSheetByName(SH.machines) ? readTable_(SH.machines).rows.filter(function (r) { return String(r['À vérifier'] || '').trim(); }).length : 0;
   out.comptes = readTable_(SH.ops).rows.length;
@@ -1880,3 +1940,356 @@ function exportDeclarationXlsx_(d) {
   var file = folder.createFile(resp.getBlob().setName(name + '.xlsx'));
   return { url: file.getUrl(), name: name + '.xlsx' };
 }
+
+
+/** Règle de date : une manipulation ne peut pas être datée d'avant la dernière opération déjà enregistrée sur la bouteille
+ *  (ni d'avant son entrée au dépôt), sinon les pesées ne suivraient plus l'ordre chronologique. */
+function checkDateBouteille_(b, dateFr) {
+  if (!b) return;
+  var dt = parseFr_(dateFr), last = parseFr_(b.derniereOp), entree = parseFr_(b.dateEntree);
+  if (dt && last && dt < last) throw new Error('La bouteille ' + b.ref + ' a déjà une opération enregistrée le ' + b.derniereOp + ' : la date ne peut pas être antérieure. Choisis une date à partir du ' + b.derniereOp + '.');
+  if (dt && entree && dt < entree) throw new Error('La bouteille ' + b.ref + ' est entrée au dépôt le ' + b.dateEntree + ' : la date ne peut pas être antérieure.');
+}
+
+/* ================================================================== Livraison 4 */
+
+var L4 = { registreFolder: ['ARE Fluides', 'Registre'], cerfaPapierFolder: ['ARE Fluides', 'CERFA papier'], controles: 'Pesées de contrôle',
+  trashMach: '_Machines supprimées', tolPesee: 0.01 };
+
+function setParam_(key, value) {
+  ensureSheet_(SH.params, ['Paramètre', 'Valeur']);
+  var t = readTable_(SH.params), row = t.rows.filter(function (r) { return String(r['Paramètre']).trim() === key; })[0];
+  writeRow_(t, { 'Paramètre': key, 'Valeur': value }, row ? row._row : null);
+}
+function paramOn_(key) { return /^(oui|true|1)$/i.test(String(params_()[key] || '').trim()); }
+
+/* ---------- Réglages (admin) */
+function reglages_() {
+  return { envoiClient: paramOn_('Envoi des documents au client'), alertesEmail: paramOn_('E-mails d’alerte'), emailAlertes: String(params_()['E-mail des alertes'] || '') };
+}
+function saveReglages_(d) {
+  if (d.envoiClient !== undefined) setParam_('Envoi des documents au client', d.envoiClient ? 'oui' : 'non');
+  if (d.alertesEmail !== undefined) setParam_('E-mails d’alerte', d.alertesEmail ? 'oui' : 'non');
+  if (d.emailAlertes !== undefined) {
+    var e = String(d.emailAlertes || '').trim();
+    if (e && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) throw new Error('Adresse e-mail des alertes invalide.');
+    setParam_('E-mail des alertes', e);
+  }
+  return reglages_();
+}
+
+/* ---------- Base machines : vue complète et validation des propositions */
+function machinesBase_() {
+  if (!ss_().getSheetByName(SH.machines)) return [];
+  var na = function (v) { return v === '' || v === null || v === undefined ? '' : String(v).replace('.', ','); };
+  return readTable_(SH.machines).rows.filter(function (r) { return String(r['Modèle'] || '').trim(); }).map(function (r) {
+    var props = []; try { props = JSON.parse(r['Propositions (JSON)'] || '[]'); } catch (e) { props = []; }
+    return {
+      row: r._row, marque: String(r['Marque'] || ''), modele: String(r['Modèle'] || ''), appareil: String(r['Type d’appareil'] || ''), gamme: String(r['Gamme'] || ''),
+      type: String(r['Type d’installation'] || ''), alimentation: String(r['Alimentation'] || ''), liaisons: String(r['Liaisons'] || ''), fluide: String(r['Fluide'] || ''),
+      charge: na(r['Charge usine (kg)']), precharge: na(r['Longueur préchargée (m)']), gpm: na(r['Charge supplémentaire (g/m)']), lmax: na(r['Longueur max UE-UI (m)']),
+      source: String(r['Source'] || ''), remarque: String(r['Remarque'] || ''), aVerifier: String(r['À vérifier'] || ''),
+      nouveau: props.some(function (p) { return p.nouveau; }), propositions: props.filter(function (p) { return !p.nouveau; }).map(function (p) { return p.par + ' (' + p.date + ') : ' + (p.texte || ''); })
+    };
+  });
+}
+
+function validateMachine_(d, user) {
+  var t = readTable_(SH.machines), row = t.rows.filter(function (r) { return r._row === Number(d.row); })[0];
+  if (!row || normModele_(row['Modèle']) !== normModele_(d.modele)) throw new Error('Machine introuvable : recharge la liste.');
+  var props = []; try { props = JSON.parse(row['Propositions (JSON)'] || '[]'); } catch (e) { props = []; }
+  var qui = ((user.prenom || '') + ' ' + (user.nom || '')).trim(), quand = today_();
+  var nouveau = props.some(function (p) { return p.nouveau; });
+  if (d.action === 'accept') {
+    var up = { 'À vérifier': '', 'Propositions (JSON)': '' };
+    props.forEach(function (p) { if (p.up) Object.keys(p.up).forEach(function (k) { up[k] = p.up[k]; }); });
+    up['Source'] = (String(row['Source'] || '') + ' · validé par ' + qui + ' le ' + quand).slice(0, 1000);
+    writeRow_(t, up, row._row);
+    return { msg: 'Modifications de ' + row['Modèle'] + ' acceptées.', list: machinesBase_() };
+  }
+  if (d.action === 'refuse') {
+    if (nouveau) {
+      archiveRow_(L4.trashMach, t, row, user);
+      t.sh.deleteRow(row._row);
+      return { msg: 'Modèle ' + row['Modèle'] + ' retiré de la base (copie dans l’onglet masqué « ' + L4.trashMach + ' »).', list: machinesBase_() };
+    }
+    writeRow_(t, { 'À vérifier': '', 'Propositions (JSON)': '' }, row._row);
+    return { msg: 'Proposition refusée : ' + row['Modèle'] + ' reste inchangé.', list: machinesBase_() };
+  }
+  throw new Error('Action inconnue.');
+}
+
+/* ---------- Registre des mouvements : export d'une période (PDF ou Excel) */
+function registreRows_(du, au) {
+  var a = parseFr_(du), b = parseFr_(au);
+  if (!a || !b) throw new Error('Indique la période (jj/mm/aaaa).');
+  if (a > b) throw new Error('La date de début est après la date de fin.');
+  b = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 23, 59, 59);
+  return readTable_(SH.mouv).rows.filter(function (r) { var dt = parseFr_(r['Date']); return dt && dt >= a && dt <= b; }).map(function (r) {
+    var data = {}; try { data = JSON.parse(r['Données'] || '{}'); } catch (e) { data = {}; }
+    var v = num_(r['Variation bouteille (kg)']), q = num_(data.quantite);
+    if (!isFinite(q)) q = isFinite(v) ? Math.abs(v) : NaN;
+    var dt = parseFr_(r['Date']);
+    return { t: dt.getTime(), date: String(r['Date']), operation: String(r['Opération'] || ''), cadre: String(r['Cadre'] || ''), client: String(r['Chantier / Client'] || ''),
+      machine: String(r['Machine'] || ''), fluide: String(r['Fluide'] || ''), quantite: isFinite(q) && q ? Math.round(q * 1000) / 1000 : '',
+      bouteille: String(r['Bouteille'] || ''), charge: num_(r['Charge totale machine (kg)']), teq: num_(r['t éq. CO2']), operateur: String(r['Opérateur'] || ''), cerfa: String(r['N° CERFA'] || '') };
+  }).sort(function (x, y) { return x.t - y.t; });
+}
+var REG_HEAD = ['Date', 'Opération', 'Chantier / client', 'Machine', 'Fluide', 'Quantité (kg)', 'Bouteille', 'Charge totale (kg)', 't éq. CO₂', 'Opérateur', 'N° CERFA'];
+function regLine_(x) { return [x.date, x.operation + (x.cadre && x.cadre !== x.operation ? ' (' + x.cadre + ')' : ''), x.client, x.machine, x.fluide, x.quantite, x.bouteille, isFinite(x.charge) ? x.charge : '', isFinite(x.teq) ? x.teq : '', x.operateur, x.cerfa]; }
+
+function registreApercu_(d) { var l = registreRows_(d.du, d.au); return { n: l.length, kg: fr_(l.reduce(function (s, x) { return s + (x.quantite || 0); }, 0), 2) }; }
+
+function exportRegistre_(d) {
+  var rows = registreRows_(d.du, d.au), p = params_();
+  var name = 'Registre fluides du ' + String(d.du).replace(/\//g, '-') + ' au ' + String(d.au).replace(/\//g, '-');
+  var folder = folderPath_(L4.registreFolder);
+  if (d.format === 'xlsx') {
+    var ss = SpreadsheetApp.create(name), sh = ss.getSheets()[0];
+    sh.setName('Registre');
+    var data = [REG_HEAD].concat(rows.map(regLine_));
+    sh.getRange(1, 1, data.length, REG_HEAD.length).setValues(data);
+    sh.getRange(1, 1, 1, REG_HEAD.length).setFontWeight('bold');
+    sh.setColumnWidth(3, 220); sh.setColumnWidth(4, 200);
+    SpreadsheetApp.flush();
+    var resp = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=xlsx', { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+    DriveApp.getFileById(ss.getId()).setTrashed(true);
+    if (resp.getResponseCode() !== 200) throw new Error('Export Excel impossible (' + resp.getResponseCode() + ').');
+    var it = folder.getFilesByName(name + '.xlsx'); while (it.hasNext()) it.next().setTrashed(true);
+    var f = folder.createFile(resp.getBlob().setName(name + '.xlsx'));
+    return { url: f.getUrl(), name: name + '.xlsx', n: rows.length };
+  }
+  var e = function (v) { return String(v === undefined || v === null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var html = '<html><head><meta charset="utf-8"><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;font-size:9px;color:#1B2448}h1{font-size:16px;margin:0 0 4px}' +
+    'table{border-collapse:collapse;width:100%}th,td{border:1px solid #D5D9E6;padding:3px 4px;text-align:left;vertical-align:top}th{background:#E6E9F4}.n{text-align:right}.note{color:#4E5670}</style></head><body>' +
+    '<h1>Registre des mouvements de fluides frigorigènes</h1><div class="note">' + e(p['Raison sociale'] || '') + (p['SIRET'] ? ' · SIRET ' + e(p['SIRET']) : '') + ' · du ' + e(d.du) + ' au ' + e(d.au) + ' · ' + rows.length + ' opération' + (rows.length > 1 ? 's' : '') + '</div><br>' +
+    '<table><tr>' + REG_HEAD.map(function (h, i) { return '<th' + (i >= 5 && i <= 8 && i !== 6 ? ' class="n"' : '') + '>' + e(h) + '</th>'; }).join('') + '</tr>' +
+    rows.map(function (x) { return '<tr>' + regLine_(x).map(function (v, i) { return '<td' + (i >= 5 && i <= 8 && i !== 6 ? ' class="n"' : '') + '>' + e(typeof v === 'number' ? String(v).replace('.', ',') : v) + '</td>'; }).join('') + '</tr>'; }).join('') +
+    '</table><p class="note">Généré par ARE Fluides le ' + today_() + '.</p></body></html>';
+  var it2 = folder.getFilesByName(name + '.pdf'); while (it2.hasNext()) it2.next().setTrashed(true);
+  var file = folder.createFile(HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(name + '.pdf'));
+  return { url: file.getUrl(), name: name + '.pdf', n: rows.length };
+}
+
+/* ---------- Alertes d'échéance (accueil et e-mail) */
+var ALERTE_JOURS = 30;
+function alertes_() {
+  var out = [], now = new Date(), soon = new Date(now.getTime() + ALERTE_JOURS * 864e5);
+  listDetecteurs_().forEach(function (x) {
+    var nx = parseFr_(x.prochainControle), nom = [x.marque, x.ref].filter(Boolean).join(' ') || 'Détecteur';
+    if (!nx) return;
+    if (nx < now) out.push({ key: 'det:' + x.id + ':' + x.prochainControle, kind: 'detecteur', grave: true, text: nom + (x.serie ? ' (n° ' + x.serie + ')' : '') + ' : contrôle annuel dépassé depuis le ' + x.prochainControle + '.' });
+    else if (nx <= soon) out.push({ key: 'det:' + x.id + ':' + x.prochainControle, kind: 'detecteur', text: nom + (x.serie ? ' (n° ' + x.serie + ')' : '') + ' : contrôle annuel à faire avant le ' + x.prochainControle + '.' });
+  });
+  boutTable_().rows.forEach(function (r) {
+    var ref = String(r['Réf bouteille'] || '').trim();
+    if (!ref || /rendu/i.test(String(r['Statut'] || ''))) return;
+    var kind = boutKind_(r['Type']), vide = num_(r['Poids à vide (kg)']), pesee = num_(r['Dernière pesée (kg)']), reste = isFinite(vide) && isFinite(pesee) ? Math.max(0, pesee - vide) : NaN;
+    if (!isFinite(reste)) return;
+    if (kind === 'neuve') {
+      var init = num_(r['Fluide initial (kg)']); if (!isFinite(init)) init = num_(r['Poids plein à l’achat (kg)']) - vide;
+      if (isFinite(init) && init > 0 && reste <= 0.15 * init) out.push({ key: 'bneuve:' + ref + ':' + Math.round(reste * 10), kind: 'bouteille', text: 'Bouteille ' + ref + ' presque vide : ' + fr_(reste, 2) + ' kg restants. Prévoir une bouteille neuve.' });
+    } else {
+      var cap = num_(r['Capacité max (kg)']);
+      if (isFinite(cap) && cap > 0 && reste >= 0.8 * cap) out.push({ key: 'brecup:' + ref + ':' + Math.round(reste * 10), kind: 'bouteille', grave: reste >= cap, text: 'Bouteille ' + ref + (reste >= cap ? ' pleine' : ' presque pleine') + ' : ' + fr_(reste, 2) + ' kg sur ' + fr_(cap, 2) + ' kg. À rendre au distributeur.' });
+    }
+  });
+  return out;
+}
+
+/** À brancher une fois (fonction activerAlertesEmail) : e-mail quotidien des nouvelles alertes bouteilles et détecteurs. */
+function envoyerAlertes() {
+  if (!paramOn_('E-mails d’alerte')) return 'désactivé';
+  var to = String(params_()['E-mail des alertes'] || '').trim();
+  if (!to) to = readTable_(SH.ops).rows.filter(function (o) { return String(o['Rôle'] || '').toLowerCase() === 'admin' && String(o['Actif'] || 'oui').toLowerCase() !== 'non'; }).map(function (o) { return o['E-mail (identifiant)']; }).filter(Boolean).join(',');
+  if (!to) return 'pas de destinataire';
+  var props = PropertiesService.getScriptProperties(), sent = {}; try { sent = JSON.parse(props.getProperty('ALERTES_ENVOYEES') || '{}'); } catch (e) { sent = {}; }
+  var now = Date.now(), week = 7 * 864e5, all = alertes_();
+  var nouvelles = all.filter(function (a) { return !sent[a.key] || now - sent[a.key] > week; });
+  var keep = {}; all.forEach(function (a) { if (sent[a.key]) keep[a.key] = sent[a.key]; });
+  if (!nouvelles.length) { props.setProperty('ALERTES_ENVOYEES', JSON.stringify(keep)); return 'rien à envoyer'; }
+  var li = function (k, titre) { var l = nouvelles.filter(function (a) { return a.kind === k; }); return l.length ? '<h3 style="margin:16px 0 6px">' + titre + '</h3><ul>' + l.map(function (a) { return '<li' + (a.grave ? ' style="color:#A3330D;font-weight:bold"' : '') + '>' + a.text + '</li>'; }).join('') + '</ul>' : ''; };
+  MailApp.sendEmail({ to: to, name: 'ARE Fluides', subject: 'ARE Fluides : ' + nouvelles.length + ' alerte' + (nouvelles.length > 1 ? 's' : '') + ' (bouteilles, détecteurs)',
+    htmlBody: '<div style="font-family:Arial,sans-serif;color:#1B2448">' + li('bouteille', 'Bouteilles') + li('detecteur', 'Détecteurs de fuite') + '<p style="color:#4E5670">Ces alertes restent affichées sur l’accueil de l’appli tant qu’elles ne sont pas réglées. Un rappel est renvoyé chaque semaine.</p></div>' });
+  nouvelles.forEach(function (a) { keep[a.key] = now; });
+  props.setProperty('ALERTES_ENVOYEES', JSON.stringify(keep));
+  return nouvelles.length + ' alerte(s) envoyée(s)';
+}
+/** À lancer une fois depuis l'éditeur : autorise l'envoi d'e-mails et programme l'envoi quotidien des alertes (7 h). */
+function activerAlertesEmail() {
+  ScriptApp.getProjectTriggers().forEach(function (tr) { if (tr.getHandlerFunction() === 'envoyerAlertes') ScriptApp.deleteTrigger(tr); });
+  ScriptApp.newTrigger('envoyerAlertes').timeBased().everyDays(1).atHour(7).create();
+  setParam_('E-mails d’alerte', 'oui');
+  Logger.log('Alertes par e-mail programmées chaque jour vers 7 h (' + MailApp.getRemainingDailyQuota() + ' e-mails disponibles aujourd’hui).');
+}
+
+/* ---------- Pesée de contrôle d'une bouteille */
+function peseeControle_(d, user) {
+  var f = findBout_(d.ref);
+  if (!f.row) throw new Error('Bouteille introuvable.');
+  var mesure = num_(d.pesee), date = String(d.date || '').trim(), dt = parseFr_(date);
+  if (!isFinite(mesure) || mesure <= 0) throw new Error('Indique la pesée de la bouteille seule (kg).');
+  if (!dt) throw new Error('Date au format jj/mm/aaaa.');
+  if (dt > new Date()) throw new Error('La date ne peut pas être dans le futur.');
+  var b = bouteilles_().filter(function (x) { return x.ref === String(f.row['Réf bouteille']).trim(); })[0];
+  checkDateBouteille_(b, date);
+  var attendu = num_(f.row['Dernière pesée (kg)']);
+  var ecart = isFinite(attendu) ? Math.round((mesure - attendu) * 1000) / 1000 : 0;
+  ensureSheet_(L4.controles, ['Date', 'Bouteille', 'Pesée (kg)', 'Poids attendu (kg)', 'Écart (kg)', 'Opérateur', 'Régularisation']);
+  var t = readTable_(L4.controles);
+  var conforme = Math.abs(Math.round(ecart * 1000)) <= 10;
+  var r = writeRow_(t, { 'Date': date, 'Bouteille': String(f.row['Réf bouteille']).trim(), 'Pesée (kg)': mesure, 'Poids attendu (kg)': isFinite(attendu) ? attendu : '', 'Écart (kg)': ecart,
+    'Opérateur': ((user.prenom || '') + ' ' + (user.nom || '')).trim(), 'Régularisation': conforme ? 'conforme' : 'à régulariser' }, null);
+  var kind = boutKind_(f.row['Type']);
+  // Bouteille plus légère : fluide sorti (ajout de charge) ; plus lourde : fluide entré (récupération)
+  var op = ecart < 0 ? 'ajout' : 'recup';
+  var possible = conforme || !isFinite(attendu) ? true : (op === 'ajout' ? kind !== 'recup' : kind !== 'neuve');
+  return { id: t.sh.getLastRow(), conforme: conforme || !isFinite(attendu), attendu: isFinite(attendu) ? fr_(attendu, 2) : '', ecart: ecart, ecartTxt: (ecart > 0 ? '+' : '') + Math.round(ecart * 1000) + ' g',
+    op: op, quantite: fr_(Math.abs(ecart), 2), possible: possible, ref: String(f.row['Réf bouteille']).trim(), date: date, pesee: fr_(mesure, 2) };
+}
+function marquerRegularisation_(id, cerfa) {
+  try { var t = readTable_(L4.controles), row = t.rows.filter(function (r) { return r._row === Number(id); })[0]; if (row) writeRow_(t, { 'Régularisation': 'régularisé (' + cerfa + ')' }, row._row); } catch (e) {}
+}
+
+/* ---------- Envoi des documents au client */
+function envoyerClient_(d, user) {
+  if (!paramOn_('Envoi des documents au client')) throw new Error('L’envoi des documents au client est désactivé (réglage administrateur).');
+  var c = getChantier_(d.chantierId);
+  if (!canEditMes_(c, null, user)) throw new Error(DROITS_MSG);
+  var to = String(d.email || c.email || '').trim();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) throw new Error('Indique l’e-mail du client sur la fiche chantier.');
+  var row = mesRows_(c.id)[0];
+  if (!row) throw new Error('Pas encore de mise en service pour ce chantier.');
+  var files = [], noms = [];
+  var add = function (id, label) { if (!id) return; try { var fl = DriveApp.getFileById(id); files.push(fl.getBlob()); noms.push(label); } catch (e) {} };
+  add(String(row['Rapport (ID)'] || ''), 'rapport d’installation');
+  mouvTable_().rows.filter(function (r) { return String(r['ID MES']) === String(row['ID']); }).forEach(function (r) { add(String(r['CERFA (ID)'] || ''), 'CERFA ' + r['N° CERFA']); });
+  if (!files.length) throw new Error('Aucun document à envoyer (rapport ou CERFA à refaire).');
+  var p = params_();
+  MailApp.sendEmail({ to: to, name: p['Raison sociale'] || 'Archenergie Renouvelable', subject: 'Documents de votre installation – ' + (c.client || ''),
+    htmlBody: '<div style="font-family:Arial,sans-serif;color:#1B2448"><p>Bonjour,</p><p>Vous trouverez ci-joint les documents de votre installation' + (c.marque || c.modele ? ' (' + [c.marque, c.modele].filter(Boolean).join(' ') + ')' : '') + ' : ' + noms.join(', ') + '.</p>' +
+      '<p>Le CERFA 15497 (fiche d’intervention sur les fluides frigorigènes) est à conserver avec les documents de l’équipement.</p><p>Cordialement,<br>' + ((user.prenom || '') + ' ' + (user.nom || '')).trim() + '<br>' + (p['Raison sociale'] || 'Archenergie Renouvelable') + '</p></div>',
+    attachments: files });
+  ensureColumn_(SH.chantiers, 'Documents envoyés');
+  var t = readTable_(SH.chantiers), cr = t.rows.filter(function (r) { return r['ID'] === c.id; })[0];
+  var trace = 'le ' + today_() + ' à ' + to + ' (' + noms.join(', ') + ')';
+  if (cr) writeRow_(t, { 'Documents envoyés': trace }, cr._row);
+  return { msg: 'Documents envoyés à ' + to + ' : ' + noms.join(', ') + '.', trace: trace };
+}
+
+/* ---------- CERFA papier : lecture de la photo, chantiers proposés, enregistrement */
+function readCerfaPapier_(d) {
+  if (!d.data) throw new Error('Aucune photo reçue.');
+  var block = d.mime === 'application/pdf' ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: String(d.data) } }
+    : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: String(d.data) } };
+  var prompt = 'Document : fiche d’intervention CERFA 15497 (équipements contenant des fluides frigorigènes), remplie à la main.\n' +
+    'Réponds UNIQUEMENT par un objet JSON : {"numero": "n° de la fiche", "date": "date de l’intervention jj/mm/aaaa", "client": "nom du détenteur", "adresse": "adresse (rue)", "cp": "code postal", "ville": "ville",' +
+    ' "marque": "marque de l’équipement", "modele": "modèle", "serie": "n° de série", "fluide": "fluide (ex. R32)", "chargeTotale": "charge totale en kg (nombre)",' +
+    ' "nature": ["mes"|"assemblage"|"modif"|"maintenance"|"ctrlPerio"|"ctrlNonPerio"|"demantel"|"autre" : cases cochées en case 4],' +
+    ' "chargee": "quantité de fluide chargée en kg (case 11, nombre ou vide)", "recuperee": "quantité de fluide récupérée en kg (nombre ou vide)", "fuite": "oui"|"non"|"", "operateur": "nom de l’opérateur"}.\n' +
+    'Mets "" pour ce qui est absent ou illisible. Ne devine jamais.';
+  var text = callClaude_([block, { type: 'text', text: prompt }], 800);
+  var i = text.indexOf('{'), j = text.lastIndexOf('}');
+  var raw = {}; try { raw = JSON.parse(text.slice(i, j + 1)); } catch (e) { throw new Error('CERFA illisible : reprends la photo bien à plat, avec toute la page.'); }
+  var out = {};
+  ['numero', 'date', 'client', 'adresse', 'cp', 'ville', 'marque', 'modele', 'serie', 'fluide', 'chargeTotale', 'chargee', 'recuperee', 'fuite', 'operateur'].forEach(function (k) { out[k] = raw[k] === null || raw[k] === undefined ? '' : String(raw[k]).trim().slice(0, 120); });
+  out.nature = Array.isArray(raw.nature) ? raw.nature.filter(function (k) { return /^(assemblage|mes|modif|maintenance|ctrlPerio|ctrlNonPerio|demantel|autre)$/.test(k); }) : [];
+  out.fluide = normFluide_(out.fluide);
+  ['chargeTotale', 'chargee', 'recuperee'].forEach(function (k) { var n = num_(out[k]); out[k] = isFinite(n) && n > 0 ? fr_(n, 2) : ''; });
+  if (out.date && !parseFr_(out.date)) out.date = '';
+  out.propositions = chantiersProches_(out);
+  return out;
+}
+
+/** Chantiers qui ressemblent au CERFA : n° de série, nom du client, adresse, code postal, modèle. */
+function chantiersProches_(x) {
+  var norm = function (s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
+  var nc = norm(x.client), na = norm(x.adresse), ns = normModele_(x.serie), nm = normModele_(x.modele);
+  return listChantiers_().map(function (c) {
+    var sc = 0, why = [];
+    if (ns && ns.length >= 5 && (normModele_(c.serieUE) === ns || normModele_(c.serieUI) === ns)) { sc += 10; why.push('même n° de série'); }
+    var cc = norm(c.client);
+    if (nc && cc && (cc === nc || (nc.length >= 4 && (cc.indexOf(nc) >= 0 || nc.indexOf(cc) >= 0)))) { sc += 5; why.push('même client'); }
+    else if (nc && cc && nc.length >= 4) {
+      var parts = String(x.client).toLowerCase().split(/\s+/).filter(function (w) { return w.length >= 3; });
+      if (parts.some(function (w) { return cc.indexOf(norm(w)) >= 0; })) { sc += 3; why.push('nom proche'); }
+    }
+    if (na && na.length >= 6 && norm(c.adresse) && (norm(c.adresse).indexOf(na) >= 0 || na.indexOf(norm(c.adresse)) >= 0)) { sc += 3; why.push('même adresse'); }
+    if (x.cp && String(c.cp || '') === String(x.cp)) { sc += 1; why.push('même code postal'); }
+    if (nm && nm.length >= 5 && normModele_(c.modele) === nm) { sc += 2; why.push('même modèle'); }
+    return { c: c, sc: sc, why: why };
+  }).filter(function (z) { return z.sc >= 3; }).sort(function (a, b) { return b.sc - a.sc; }).slice(0, 5).map(function (z) {
+    return { id: z.c.id, client: z.c.client, adresse: [z.c.adresse, [z.c.cp, z.c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', '), machine: [z.c.marque, z.c.modele].filter(Boolean).join(' '), dateMes: z.c.dateMes, raison: z.why.join(', ') };
+  });
+}
+
+function saveCerfaPapier_(d, user) {
+  var numero = String(d.numero || '').trim();
+  if (!numero) throw new Error('Indique le n° du CERFA.');
+  var date = String(d.date || '').trim(), dt = parseFr_(date);
+  if (!dt) throw new Error('Indique la date du CERFA (jj/mm/aaaa).');
+  if (dt > new Date()) throw new Error('La date du CERFA ne peut pas être dans le futur.');
+  var mv = mouvTable_();
+  if (mv.rows.some(function (r) { return String(r['N° CERFA']).trim().toLowerCase() === numero.toLowerCase(); })) throw new Error('Le CERFA ' + numero + ' est déjà dans le registre.');
+  var op = d.op === 'ajout' || d.op === 'recup' ? d.op : 'autre';
+  var quantite = 0, avant = NaN, apres = NaN, b = null;
+  if (op !== 'autre') {
+    quantite = num_(d.quantite);
+    if (!(quantite > 0)) throw new Error('Indique la quantité ' + (op === 'ajout' ? 'chargée' : 'récupérée') + ' (kg).');
+    if (!d.bouteille) throw new Error('Choisis la bouteille utilisée.');
+    b = bouteilles_().filter(function (x) { return x.ref === d.bouteille; })[0];
+    if (!b) throw new Error('Bouteille introuvable.');
+    checkDateBouteille_(b, date);
+    avant = num_(b.pesee);
+    apres = num_(d.poidsSeule);
+    if (!isFinite(apres) && isFinite(avant)) apres = avant + (op === 'ajout' ? -quantite : quantite);
+  }
+  // Chantier : existant (choisi parmi les propositions) ou créé à partir du CERFA
+  var c;
+  if (d.chantierId) c = getChantier_(d.chantierId);
+  else {
+    if (!String(d.client || '').trim()) throw new Error('Indique le nom du client (détenteur).');
+    var parts = String(d.client).trim().split(/\s+/);
+    c = saveChantier_({ nom: parts.length > 1 ? parts.slice(1).join(' ') : parts[0], prenom: parts.length > 1 ? parts[0] : '', adresse: d.adresse || '', cp: d.cp || '', ville: d.ville || '',
+      marque: d.marque || '', modele: d.modele || '', fluide: d.fluide || '', serieUE: d.serie || '', chargeUsine: '', commentaires: 'Créé depuis le CERFA papier ' + numero }, user);
+  }
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var photo = null;
+    if (d.data) photo = saveFile_(chantierFolder_(c), d.data, d.mime === 'application/pdf' ? 'application/pdf' : 'image/jpeg',
+      aammjj_(date) + ' CERFA papier ' + String(c.client || '').replace(/[\\\/:*?"<>|]/g, ' ').trim() + ' ' + numero + (d.mime === 'application/pdf' ? '.pdf' : '.jpg'));
+    var rows = mesRows_(c.id), mesRow = rows[0], opNom = ((user.prenom || '') + ' ' + (user.nom || '')).trim() || user.email;
+    var nature = Array.isArray(d.nature) ? d.nature : [];
+    if (!mesRow) {
+      var mt = readTable_(MES.sheet);
+      writeRow_(mt, { 'ID': nextId_(mt.rows.concat(readTableSafe_('_MES supprimées')), 'M', 'ID'), 'ID chantier': c.id, 'Date': date, 'Opérateur ID': user.id, 'Opérateur': opNom,
+        'N° série UE': d.serie || c.serieUE || '', 'N° série UI': c.serieUI || '', 'Photos': '[]', 'Créée le': new Date(), 'Commentaire rapport': 'Mise en service saisie depuis le CERFA papier ' + numero }, null);
+      mesRow = mesRows_(c.id)[0];
+      var ct = readTable_(SH.chantiers), cr = ct.rows.filter(function (r) { return r['ID'] === c.id; })[0];
+      if (cr && !String(cr['Date MES'] || '').trim()) writeRow_(ct, { 'Date MES': date }, cr._row);
+    }
+    var fl = fluideInfo_(d.fluide || c.fluide), gwp = fl ? fl.gwp : num_(c.gwp), charge = num_(d.chargeTotale);
+    var data = { op: op, papier: true, cerfa: numero, date: date, quantite: quantite || '', nature: nature, fuite: d.fuite || '', operateurPapier: d.operateur || '',
+      pesee: op === 'autre' ? null : { mode: 'cerfa', seule: isFinite(apres) ? apres : null, attendu: isFinite(avant) ? Math.round((avant + (op === 'ajout' ? -quantite : quantite)) * 1000) / 1000 : null } };
+    writeRow_(mv, {
+      'Date': date, 'Opération': op === 'ajout' ? 'Ajout de charge' : op === 'recup' ? 'Récupération' : 'Intervention', 'Cadre': 'CERFA papier',
+      'Chantier / Client': c.client, 'Adresse': [c.adresse, [c.cp, c.ville].filter(Boolean).join(' ')].filter(Boolean).join(', '), 'Machine': [c.marque, c.modele].filter(Boolean).join(' '),
+      'Fluide': d.fluide || c.fluide, 'Bouteille': b ? b.ref : '', 'Poids avant (kg)': isFinite(avant) ? avant : '', 'Poids après (kg)': isFinite(apres) ? apres : '',
+      'Variation bouteille (kg)': quantite ? (op === 'ajout' ? -quantite : quantite) : 0,
+      'Charge totale machine (kg)': isFinite(charge) ? charge : '', 't éq. CO2': isFinite(charge) && isFinite(gwp) ? Math.round(charge * gwp) / 1000 : '',
+      'Opérateur': d.operateur || opNom, 'N° CERFA': numero, 'Observations': 'CERFA papier saisi par ' + opNom,
+      'ID chantier': c.id, 'ID MES': String(mesRow['ID']), 'Opérateur ID': user.id, 'CERFA (lien)': photo ? photo.url : '', 'CERFA (ID)': photo ? photo.id : '', 'Données': JSON.stringify(data)
+    }, null);
+    if (b && isFinite(apres)) {
+      var bt = readTable_(SH.bout), br = bt.rows.filter(function (r) { return String(r['Réf bouteille']).trim() === b.ref; })[0];
+      if (br) {
+        var bup = { 'Dernière pesée (kg)': apres }, bv = num_(br['Poids à vide (kg)']);
+        if (isFinite(bv)) bup['Fluide restant (kg)'] = Math.round(Math.max(0, apres - bv) * 1000) / 1000;
+        if (!String(br['Fluide'] || '').trim() && (d.fluide || c.fluide)) bup['Fluide'] = d.fluide || c.fluide;
+        writeRow_(bt, bup, br._row);
+      }
+    }
+  } finally { lock.releaseLock(); }
+  return { chantier: getChantier_(c.id), msg: 'CERFA ' + numero + ' enregistré sur le chantier ' + c.client + '.' };
+}
+function readTableSafe_(name) { try { return readTable_(name).rows; } catch (e) { return []; } }
