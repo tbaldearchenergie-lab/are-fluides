@@ -88,6 +88,9 @@
   .spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:s 1s linear infinite;margin:40px auto}
   @keyframes s{to{transform:rotate(360deg)}}
   .hidden{display:none}
+  .sheetbg{position:fixed;inset:0;z-index:20;background:rgba(27,36,72,.45);display:flex;align-items:flex-end;justify-content:center}
+  .sheet{width:100%;max-width:560px;background:#fff;border-radius:20px 20px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
+  .sheet .btn{justify-content:flex-start;min-height:56px;font-size:16px}
   body.typing .loginlogo{display:none}
   .steps{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:6px}
   .steps .st{display:flex;flex-direction:column;gap:5px;min-width:0}
@@ -971,7 +974,7 @@ function photoBlock(slot, req) {
     (list.length ? '<div class="thumbs">' + list.map(function (p, i) {
       return '<div class="thumb"><img alt="' + esc(slot) + ' ' + (i + 1) + '" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removePhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>';
     }).join('') + '</div>' : '') +
-    '<div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Photo</button>' + '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '|gal">' + ICON.image + 'Galerie</button>' + '</div></div>';
+    '<button type="button" class="btn out" style="min-height:46px" data-act="photoMenu" data-arg="photo|' + esc(slot) + '">' + ICON.camera + 'Ajouter une photo</button></div>';
 }
 
 V.mes = function () {
@@ -990,7 +993,7 @@ V.mes = function () {
       var slot = w === 'UE' ? 'Plaque signalétique UE' : 'Plaque signalétique UI';
       h += '<div class="card">' + field('Unité ' + (w === 'UE' ? 'extérieure' : 'intérieure') + (w === 'UE' && !m.add ? ' *' : ''), 'mes.d.serie' + w, { ph: 'N° de série sur la plaque' }) +
         (m.reading === w ? '<div class="note" style="display:flex;align-items:center;gap:10px"><span class="spin" style="width:20px;height:20px;margin:0"></span>Lecture de la plaque…</div>' :
-          '<div class="note">Lire le n° sur la photo de la plaque :</div><div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="readPlate" data-arg="' + w + '">' + ICON.camera + 'Photo</button>' + '<button type="button" class="btn out" style="min-height:46px" data-act="readPlate" data-arg="' + w + '|gal">' + ICON.image + 'Galerie</button>' + '</div>') +
+          '<button type="button" class="btn out" style="min-height:46px" data-act="photoMenu" data-arg="plate|' + w + '">' + ICON.camera + 'Lire sur la photo de la plaque</button>') +
         (m.photos[slot].length ? '<div class="note">Photo de la plaque gardée pour le rapport (' + m.photos[slot].length + ').</div>' : '') + '</div>';
     });
     h += '<div class="note">La photo de la plaque est lue automatiquement et rangée avec les photos du rapport. Vérifie toujours le numéro.</div>';
@@ -1096,7 +1099,7 @@ V.rapport = function () {
         '<button type="button" class="chip" data-act="toggleRemovePhoto" data-arg="' + esc(p.id) + '">' + (gone ? 'Garder' : '✕') + '</button></div></div>';
     }).join('') +
       (added.length ? '<div class="thumbs">' + added.map(function (p, i) { return '<div class="thumb"><img alt="" src="' + p.url + '"><button type="button" aria-label="Retirer la photo" data-act="removeRapPhoto" data-arg="' + esc(slot) + '|' + i + '">✕</button></div>'; }).join('') + '</div>' : '') +
-      '<div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '">' + ICON.camera + 'Photo</button>' + '<button type="button" class="btn out" style="min-height:46px" data-act="pickPhoto" data-arg="' + esc(slot) + '|gal">' + ICON.image + 'Galerie</button>' + '</div></div>';
+      '<button type="button" class="btn out" style="min-height:46px" data-act="photoMenu" data-arg="photo|' + esc(slot) + '">' + ICON.camera + 'Ajouter une photo</button></div>';
   });
   h += '<button class="btn" data-act="saveReport">' + (mes.rapport ? 'Enregistrer et refaire le rapport' : 'Créer le rapport') + '</button>' +
     '<input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden"><input type="file" id="photoGal" accept="image/*" class="hidden">';
@@ -1136,6 +1139,16 @@ Object.assign(A, {
     if (err) { S.msg = { err: true, text: err }; render(); window.scrollTo(0, 0); return; }
     S.mes.step = Math.min(S.mes.step + 1, steps.length - 1); S.msg = null; render(); window.scrollTo(0, 0);
   },
+  // Un seul bouton : sur ordinateur il ouvre directement le choix de fichier ; sur téléphone, un petit menu Photo / Galerie
+  photoMenu: function (a) {
+    var i = a.indexOf('|'), kind = a.slice(0, i), arg = a.slice(i + 1);
+    var desktop = !('ontouchstart' in window) && window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+    if (desktop) return openPicker(kind, arg, 'gal');
+    S.sheet = { kind: kind, arg: arg }; render();
+  },
+  sheetPick: function (how) { var sh = S.sheet; S.sheet = null; var el = document.getElementById('sheet'); if (el) el.parentNode.removeChild(el); if (sh) openPicker(sh.kind, sh.arg, how); },
+  noop: function () {},
+  closeSheet: function () { S.sheet = null; var el = document.getElementById('sheet'); if (el) el.parentNode.removeChild(el); },
   pickPhoto: function (a) { var g = /\|gal$/.test(a); S.pendingSlot = a.replace(/\|gal$/, ''); var i = document.getElementById(g ? 'photoGal' : 'photoInput'); if (i) { i.value = ''; i.click(); } },
   removePhoto: function (arg) { var p = arg.split('|'); S.mes.photos[p[0]].splice(+p[1], 1); render(); },
   readPlate: function (a) { var g = /\|gal$/.test(a); S.pendingPlate = a.replace(/\|gal$/, ''); var i = document.getElementById(g ? 'plateGal' : 'plateInput'); if (i) { i.value = ''; i.click(); } },
@@ -1335,6 +1348,10 @@ function render() {
       '<button class="tab' + (/^bottle/.test(scr) ? ' on' : '') + '" data-act="goBottles"' + (/^bottle/.test(scr) ? ' aria-current="page"' : '') + '>' + ICON.bottleNav + 'Bouteilles</button>' +
       '<button class="avatar' + (/^(profile|admin|detecteurs|distributeurs|declaration)$/.test(scr) ? ' on' : '') + '" aria-label="Mon profil" data-act="goProfile">' + esc(initials(S.user)) + '</button></div></nav>';
   }
+  if (S.sheet) html += '<div class="sheetbg" id="sheet" data-act="closeSheet"><div class="sheet" role="dialog" aria-label="Ajouter une photo" data-act="noop">' +
+    '<button type="button" class="btn" data-act="sheetPick" data-arg="cam">' + ICON.camera + 'Prendre une photo</button>' +
+    '<button type="button" class="btn out" data-act="sheetPick" data-arg="gal">' + ICON.image + (S.sheet.kind === 'att' ? 'Choisir une image ou un PDF' : 'Choisir dans la galerie') + '</button>' +
+    '<button type="button" class="btn ghost" data-act="closeSheet">Annuler</button></div></div>';
   var focused = document.activeElement && document.activeElement.getAttribute('data-bind');
   document.getElementById('app').innerHTML = html;
   if (focused) { var el = document.querySelector('[data-bind="' + focused + '"]'); if (el) { el.focus(); try { var n = el.value.length; el.setSelectionRange(n, n); } catch (e) {} } }
@@ -1420,8 +1437,7 @@ function attBanner() {
 function attButtons(target) {
   var busy = S.attBusy === (target || 'me');
   if (busy) return '<div class="note" style="display:flex;align-items:center;gap:10px"><span class="spin" style="width:20px;height:20px;margin:0"></span>Envoi de l’attestation…</div>';
-  return '<div class="g2"><button type="button" class="btn out" style="min-height:46px" data-act="pickAtt" data-arg="cam|' + esc(target || '') + '">' + ICON.camera + 'Photo</button>' +
-    '<button type="button" class="btn out" style="min-height:46px" data-act="pickAtt" data-arg="file|' + esc(target || '') + '">' + ICON.file + 'Fichier</button></div>' +
+  return '<button type="button" class="btn out" style="min-height:46px" data-act="photoMenu" data-arg="att|' + esc(target || '') + '">' + ICON.file + 'Charger l’attestation (photo ou PDF)</button>' +
     '<input type="file" id="attCam" accept="image/*" capture="environment" class="hidden"><input type="file" id="attFile" accept="image/*,application/pdf" class="hidden">';
 }
 function attStatus(ok, date) {
@@ -1749,6 +1765,11 @@ document.addEventListener('input', function (e) {
   if (/^form\.(modele|marque|chargeUsine|precharge|gpm|fluideAutre)$/.test(p || '')) { setPath(p, e.target.value); refreshMachBox(); }
 });
 
+function openPicker(kind, arg, how) {
+  if (kind === 'photo') A.pickPhoto(arg + (how === 'gal' ? '|gal' : ''));
+  else if (kind === 'plate') A.readPlate(arg + (how === 'gal' ? '|gal' : ''));
+  else if (kind === 'att') A.pickAtt((how === 'gal' ? 'file' : 'cam') + '|' + arg);
+}
 /* ============================== Événements ============================== */
 document.addEventListener('click', function (e) {
   var el = e.target.closest('[data-act]');
