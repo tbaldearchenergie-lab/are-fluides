@@ -72,7 +72,7 @@ function api(req) {
       listDistributeurs: function () { return distributeurs_(); },
       saveDistributeur: function (d) { admin_(user); return saveDistributeur_(d, user); },
       declaration: function (d) { admin_(user); return declaration_(d); },
-      exportDeclaration: function (d) { admin_(user); return exportDeclaration_(d); }
+      exportDeclaration: function (d) { admin_(user); return d.format === 'xlsx' ? exportDeclarationXlsx_(d) : exportDeclaration_(d); }
     };
     if (!priv[action]) throw new Error('Action inconnue : ' + action);
     return ok_(priv[action](data));
@@ -134,6 +134,8 @@ function toCell_(v) {
   var s = v.trim();
   var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
+  // Nombre décimal (1.5 ou 1,5) : écrit en nombre, sinon le tableur français lit « 1.5 » comme une date (1er mai)
+  if (/^-?\d+[.,]\d+$/.test(s)) return Number(s.replace(',', '.'));
   return s;
 }
 
@@ -1105,12 +1107,29 @@ function saveManip_(d, user) {
     var chargeUsine = num_(d.chargeUsine);
     if (!isFinite(chargeUsine)) chargeUsine = num_(c.chargeUsine);
     if (!isFinite(chargeUsine) && machine) chargeUsine = num_(machine.charge);
-    var avant = num_(d.poidsAvant), apres = num_(d.poidsApres), quantite = 0;
+    // Quantité transvasée : pesées avant / après (bouteille avec ses accessoires) ou saisie directe.
+    // Le stock se suit ensuite avec la pesée de la bouteille seule (sans accessoires).
+    var avant = NaN, apres = NaN, quantite = 0, pesee = null;
     if (d.op === 'ajout' || d.op === 'recup') {
       if (!d.bouteille) throw new Error('Choisis la bouteille utilisée.');
-      if (!isFinite(avant) || !isFinite(apres)) throw new Error('Saisis les deux pesées de la bouteille.');
-      quantite = d.op === 'ajout' ? avant - apres : apres - avant;
-      if (!(quantite > 0)) throw new Error(d.op === 'ajout' ? 'La bouteille doit être plus légère après la charge.' : 'La bouteille doit être plus lourde après la récupération.');
+      if (d.mode === 'direct') {
+        quantite = num_(d.quantite);
+        if (!(quantite > 0)) throw new Error('Indique la quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + ' (kg).');
+      } else {
+        var acA = num_(d.poidsAvant), acB = num_(d.poidsApres);
+        if (!isFinite(acA) || !isFinite(acB)) throw new Error('Saisis les deux pesées de la bouteille.');
+        quantite = d.op === 'ajout' ? acA - acB : acB - acA;
+        if (!(quantite > 0)) throw new Error(d.op === 'ajout' ? 'La bouteille doit être plus légère après la charge.' : 'La bouteille doit être plus lourde après la récupération.');
+      }
+      quantite = Math.round(quantite * 1000) / 1000;
+      var bref = bouteilles_().filter(function (b) { return b.ref === d.bouteille; })[0];
+      avant = bref ? num_(bref.pesee) : NaN;   // dernière pesée de la bouteille seule
+      var attendu = isFinite(avant) ? avant + (d.op === 'ajout' ? -quantite : quantite) : NaN;
+      apres = num_(d.poidsSeule);
+      if (!isFinite(apres)) apres = isFinite(attendu) ? attendu : (d.mode === 'direct' ? NaN : num_(d.poidsApres));
+      pesee = { mode: d.mode === 'direct' ? 'direct' : 'pesee', avecAccessoires: d.mode === 'direct' ? null : { avant: num_(d.poidsAvant), apres: num_(d.poidsApres) },
+        seule: isFinite(apres) ? apres : null, attendu: isFinite(attendu) ? Math.round(attendu * 1000) / 1000 : null,
+        ecart: isFinite(attendu) && isFinite(apres) ? Math.round((apres - attendu) * 1000) / 1000 : null };
     }
     var detecteur = null;
     if (d.op !== 'mes') {
@@ -1181,7 +1200,7 @@ function saveManip_(d, user) {
       quantite: quantite, bouteille: d.bouteille || '', distributeur: distributeur, detecteur: detecteur,
       fuite: d.fuite === 'oui' ? 'oui' : 'non', fuites: d.fuites || [], vide: d.vide || '', tenue: d.tenue || '', remontee: d.remontee || '',
       nature: Array.isArray(d.nature) ? d.nature.filter(function (k) { return /^(assemblage|mes|modif|maintenance|ctrlPerio|ctrlNonPerio|demantel|autre)$/.test(k); }) : ['mes'], natureAutre: String(d.natureAutre || '').trim(),
-      longueur: c.longueur, precharge: c.precharge, gpm: c.gpm, observations: d.observations || '',
+      longueur: c.longueur, precharge: c.precharge, gpm: c.gpm, observations: d.observations || '', pesee: pesee,
       operateur: opNom, attestation: user.attestation || ''
     };
     m.observationsCerfa = observations_(m);
@@ -1189,7 +1208,7 @@ function saveManip_(d, user) {
       'Date': date, 'Opération': d.op === 'relache' ? 'Mise en service' : MES.ops[d.op], 'Cadre': 'Mise en service',
       'Chantier / Client': c.client, 'Adresse': m.adresse, 'Machine': m.machine, 'Fluide': c.fluide, 'Bouteille': m.bouteille,
       'Poids avant (kg)': isFinite(avant) ? avant : '', 'Poids après (kg)': isFinite(apres) ? apres : '',
-      'Variation bouteille (kg)': isFinite(avant) && isFinite(apres) ? Math.round((apres - avant) * 1000) / 1000 : 0,
+      'Variation bouteille (kg)': quantite ? (d.op === 'ajout' ? -quantite : quantite) : 0,
       'Charge totale machine (kg)': Math.round(chargeTotale * 1000) / 1000,
       't éq. CO2': isFinite(gwp) ? Math.round(chargeTotale * gwp) / 1000 : '',
       'Opérateur': opNom, 'N° CERFA': cerfa, 'Observations': m.observationsCerfa,
@@ -1541,8 +1560,13 @@ function saveBouteille_(d, user) {
     var rec = {
       'Réf bouteille': ref, 'Type': BOUT_TYPES[kind], 'Fluide': fluide, 'Poids à vide (kg)': vide,
       'Poids plein à l’achat (kg)': kind === 'neuve' ? plein : '', 'Fluide initial (kg)': kind === 'neuve' ? round3_(plein - vide) : '',
-      'Date d’entrée': dateEntree, 'Fournisseur achat': String(d.fournisseur || '').trim()
+      'Date d’entrée': dateEntree
     };
+    if (d.fournisseur !== undefined) rec['Fournisseur achat'] = String(d.fournisseur || '').trim();
+    if (d.distributeur !== undefined) {
+      if (d.distributeur && !distributeurs_().some(function (x) { return x.id === d.distributeur; })) throw new Error('Distributeur inconnu.');
+      rec['Distributeur (ID)'] = kind === 'neuve' ? '' : String(d.distributeur || '');
+    }
     if (!f.row) {
       var p0 = isFinite(pesee) ? pesee : (kind === 'neuve' ? plein : vide);
       rec['Dernière pesée (kg)'] = p0; rec['Fluide restant (kg)'] = round3_(Math.max(0, p0 - vide)); rec['Statut'] = 'Au dépôt';
@@ -1651,8 +1675,36 @@ function uploadAttestation_(user, d) {
   var file = saveFile_(folderPath_(L3.opsFolder), d.data, mime, name);
   trashFile_(String(row['Attestation (fichier)'] || ''));
   var date = today_();
-  writeRow_(t, { 'Attestation (fichier)': file.id, 'Attestation chargée': 'oui (' + date + ')' }, row._row);
-  return { date: date };
+  var up = { 'Attestation (fichier)': file.id, 'Attestation chargée': 'oui (' + date + ')' };
+  // Lecture du n° d'attestation par Claude : seul ce numéro est gardé (rien d'autre du document n'est conservé ni affiché)
+  var numero = '';
+  try { numero = readAttestationNumero_(d.data, mime); } catch (e) { numero = ''; }
+  if (numero) up['N° attestation d’aptitude'] = numero;
+  writeRow_(t, up, row._row);
+  return { date: date, numero: numero };
+}
+
+function readAttestationNumero_(data, mime) {
+  if (!PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY')) return '';
+  var block = mime === 'application/pdf' ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: String(data) } }
+    : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: String(data) } };
+  var prompt = 'Document : attestation d’aptitude à la manipulation des fluides frigorigènes (France).\n' +
+    'Réponds UNIQUEMENT par un objet JSON : {"numero": "numéro de l’attestation d’aptitude"}.\n' +
+    'Ne renvoie aucune autre information du document. Ne renvoie jamais un numéro de sécurité sociale, de certificat d’organisme ou de SIRET. Mets "" si le numéro de l’attestation est absent ou illisible.';
+  var text = callClaude_([block, { type: 'text', text: prompt }], 100);
+  var i = text.indexOf('{'), j = text.lastIndexOf('}');
+  var raw = {}; try { raw = JSON.parse(text.slice(i, j + 1)); } catch (e) { raw = {}; }
+  var n = String(raw.numero || '').trim().slice(0, 40);
+  if (!/^[A-Za-z0-9][A-Za-z0-9\-\/ .]{2,39}$/.test(n)) return '';
+  if (/^[12]\s?\d{2}\s?\d{2}/.test(n) && n.replace(/\D/g, '').length >= 13) return '';   // ressemble à un n° de sécurité sociale : ignoré
+  return n;
+}
+
+/** À lancer une fois depuis l'éditeur Apps Script après la mise à jour : accepte les nouvelles autorisations (export Excel). */
+function autoriserExcel() {
+  var ss = SpreadsheetApp.create('ARE Fluides - test autorisation');
+  DriveApp.getFileById(ss.getId()).setTrashed(true);
+  Logger.log('Export Excel opérationnel (jeton ' + (ScriptApp.getOAuthToken() ? 'OK' : 'absent') + ').');
 }
 
 function profileSummary_(user) {
@@ -1793,4 +1845,38 @@ function exportDeclaration_(d) {
   var it = folder.getFilesByName(name); while (it.hasNext()) it.next().setTrashed(true);
   var file = folder.createFile(HtmlService.createHtmlOutput(html).getAs('application/pdf').setName(name));
   return { url: file.getUrl(), name: name };
+}
+
+
+/** Récapitulatif de la déclaration en Excel : classeur temporaire Google Sheets exporté en .xlsx dans Drive › Déclarations. */
+function exportDeclarationXlsx_(d) {
+  var x = declaration_(d), name = 'Déclaration fluides ' + x.annee;
+  var val = function (v) { var n = num_(v); return isFinite(n) ? n : v; };
+  var ss = SpreadsheetApp.create(name);
+  var sh = ss.getSheets()[0];
+  sh.setName('Vue d’ensemble');
+  var rows = [['Code gaz', 'Neuf 1er janvier (kg)', 'Neuf 31 décembre (kg)', 'Usagé 1er janvier (kg)', 'Usagé 31 décembre (kg)']].concat(
+    x.fluides.map(function (f) { return [f.code, val(f.n1), val(f.n2), val(f.u1), val(f.u2)]; }));
+  sh.getRange(1, 1, rows.length, 5).setValues(rows);
+  sh.getRange(1, 1, 1, 5).setFontWeight('bold');
+  if (rows.length > 1) sh.getRange(2, 2, rows.length - 1, 4).setNumberFormat('0.00');
+  sh.setColumnWidth(1, 120);
+  x.fluides.forEach(function (f) {
+    var t = ss.insertSheet(f.code);
+    var r = [['Fluide neuf', 'kg']].concat(f.neuf.map(function (l) { return [(l.sub ? '    ' : '') + l.label, l.ecart !== undefined ? l.value + ' (' + l.ecart + ' kg)' : val(l.value)]; }))
+      .concat([['', ''], ['Fluide usagé', 'kg']]).concat(f.usage.map(function (l) { return [(l.sub ? '    ' : '') + l.label, l.ecart !== undefined ? l.value + ' (' + l.ecart + ' kg)' : val(l.value)]; }));
+    t.getRange(1, 1, r.length, 2).setValues(r);
+    t.getRange(1, 1, 1, 2).setFontWeight('bold');
+    t.getRange(f.neuf.length + 3, 1, 1, 2).setFontWeight('bold');
+    t.setColumnWidth(1, 420);
+  });
+  SpreadsheetApp.flush();
+  var resp = UrlFetchApp.fetch('https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=xlsx',
+    { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true });
+  DriveApp.getFileById(ss.getId()).setTrashed(true);
+  if (resp.getResponseCode() !== 200) throw new Error('Export Excel impossible (' + resp.getResponseCode() + ').');
+  var folder = folderPath_(L3.declFolder);
+  var it = folder.getFilesByName(name + '.xlsx'); while (it.hasNext()) it.next().setTrashed(true);
+  var file = folder.createFile(resp.getBlob().setName(name + '.xlsx'));
+  return { url: file.getUrl(), name: name + '.xlsx' };
 }
