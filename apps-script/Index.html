@@ -853,14 +853,14 @@ function mesAttendu() {
   if (!isFinite(last) || !(q > 0)) return NaN;
   return S.mes.d.op === 'ajout' ? last - q : last + q;
 }
-var PESEE_TOL = 0.05;   // tolérance de la balance (kg)
+var PESEE_TOL_G = 10;   // la balance pèse à 10 g près : écart toléré en grammes
 function mesCohHtml() {
   var d = S.mes.d, att = mesAttendu(), seule = numOrNaN(d.poidsSeule), b = curBottle(), q = mesQuantite();
   var h = '';
   if (isFinite(att)) h += '<div class="rows" style="padding:0 4px"><div class="row"><span>Poids attendu de la bouteille seule (' + esc(b.pesee) + ' kg ' + (d.op === 'ajout' ? '−' : '+') + ' ' + frNum(q) + ' kg)</span><span>' + frNum(att) + ' kg</span></div></div>';
   if (!isFinite(seule) || !isFinite(att)) return h;
   var ecart = seule - att;
-  if (Math.abs(ecart) <= PESEE_TOL + 1e-9) return h + '<div class="msg ok">Pesée cohérente avec la quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + '.</div>';
+  if (Math.abs(Math.round(ecart * 1000)) <= PESEE_TOL_G) return h + '<div class="msg ok">Pesée cohérente avec la quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + ' (à 10 g près).</div>';
   var qReel = d.op === 'ajout' ? numOrNaN(b.pesee) - seule : seule - numOrNaN(b.pesee);
   h += '<div class="msg err">La bouteille pèse ' + frNum(seule) + ' kg au lieu de ' + frNum(att) + ' kg attendus (écart de ' + (ecart > 0 ? '+' : '') + Math.round(ecart * 1000) + ' g).' +
     (qReel > 0 ? ' D’après cette pesée, la quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + ' serait de ' + frNum(qReel) + ' kg.' : '') + '</div>';
@@ -869,7 +869,7 @@ function mesCohHtml() {
   else h += '<button type="button" class="btn ' + (d.ecartOk ? 'dark' : 'out') + '" data-act="keepQte">' + (d.ecartOk ? '✓ ' : '') + 'Garder ' + frNum(q) + ' kg</button>';
   return h + '<div class="note">Si tu gardes ta quantité, la pesée est enregistrée telle quelle et l’écart reste visible dans le registre.</div>';
 }
-function mesIncoherent() { var att = mesAttendu(), seule = numOrNaN(S.mes.d.poidsSeule); return isFinite(att) && isFinite(seule) && Math.abs(seule - att) > PESEE_TOL + 1e-9; }
+function mesIncoherent() { var att = mesAttendu(), seule = numOrNaN(S.mes.d.poidsSeule); return isFinite(att) && isFinite(seule) && Math.abs(Math.round((seule - att) * 1000)) > PESEE_TOL_G; }
 // Bouteilles au dépôt du bon type ; celles qui contiennent un autre fluide sont affichées mais grisées
 function bottlesFor(op, all) {
   var fl = normModele(S.ctx.chantier.fluide);
