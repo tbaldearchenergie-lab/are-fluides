@@ -1771,12 +1771,26 @@ function profileSummary_(user) {
     bouteillesSansTare: boutTable_().rows.filter(function (r) { return String(r['Réf bouteille'] || '').trim() && !/rendu/i.test(String(r['Statut'] || '')) && !isFinite(num_(r['Poids à vide (kg)'])); }).length };
   try { out.alertes = alertes_().map(function (x) { return { kind: x.kind, text: x.text, grave: !!x.grave }; }); } catch (e) { out.alertes = []; }
   out.envoiClient = paramOn_('Envoi des documents au client');
+  try { out.interventions = mesInterventions_(user, 5); } catch (e) { out.interventions = []; }
   if (user.role !== 'admin') return out;
   out.machinesAVerifier = ss_().getSheetByName(SH.machines) ? readTable_(SH.machines).rows.filter(function (r) { return String(r['À vérifier'] || '').trim(); }).length : 0;
   out.comptes = readTable_(SH.ops).rows.length;
   out.detecteurs = det.length;
   out.distributeurs = distributeurs_().length;
   return out;
+}
+
+/** Dernières interventions de l'utilisateur (mises en service, ajouts, récupérations, CERFA papier…), les plus récentes d'abord. */
+function mesInterventions_(user, n) {
+  if (!ss_().getSheetByName(SH.mouv)) return [];
+  var rows = readTable_(SH.mouv).rows.filter(function (r) { return String(r['Opérateur ID'] || '') === String(user.id) && String(r['ID chantier'] || ''); });
+  rows.sort(function (a, b) { var da = parseFr_(a['Date']), db = parseFr_(b['Date']); return ((db ? db.getTime() : 0) - (da ? da.getTime() : 0)) || (b._row - a._row); });
+  return rows.slice(0, n).map(function (r) {
+    var m = manipPublic_(r), data = {}; try { data = JSON.parse(r['Données'] || '{}'); } catch (e) { data = {}; }
+    m.chantierId = String(r['ID chantier']);
+    if ((data.nature || []).indexOf('mes') >= 0) m.label = 'Mise en service';
+    return m;
+  });
 }
 
 /* ---------- Déclaration annuelle (mêmes rubriques et même ordre que le site SOCOTEC) */
@@ -2016,6 +2030,25 @@ function validateMachine_(d, user) {
     writeRow_(t, { 'À vérifier': '', 'Propositions (JSON)': '' }, row._row);
     return { msg: 'Proposition refusée : ' + row['Modèle'] + ' reste inchangé.', list: machinesBase_() };
   }
+  if (d.action === 'edit') {
+    var f = d.fields || {}, M = { marque: 'Marque', modele: 'Modèle', appareil: 'Type d’appareil', gamme: 'Gamme', type: 'Type d’installation', alimentation: 'Alimentation',
+      liaisons: 'Liaisons', fluide: 'Fluide', charge: 'Charge usine (kg)', precharge: 'Longueur préchargée (m)', gpm: 'Charge supplémentaire (g/m)', lmax: 'Longueur max UE-UI (m)', remarque: 'Remarque' };
+    var nm = String(f.modele || '').trim();
+    if (!nm) throw new Error('Le modèle est obligatoire.');
+    if (!String(f.marque || '').trim()) throw new Error('La marque est obligatoire.');
+    if (t.rows.some(function (r) { return r._row !== row._row && normModele_(r['Modèle']) === normModele_(nm); })) throw new Error('Le modèle ' + nm + ' existe déjà dans la base.');
+    ['charge', 'precharge', 'gpm', 'lmax'].forEach(function (k) { var v = String(f[k] == null ? '' : f[k]).trim(); if (v && !/^na$/i.test(v) && !/^\d+([.,]\d+)?$/.test(v)) throw new Error('Valeur numérique attendue : ' + M[k] + '.'); });
+    var w = {};
+    Object.keys(M).forEach(function (k) { if (f[k] !== undefined && t.headers.indexOf(M[k]) >= 0) w[M[k]] = String(f[k]).trim(); });
+    w['Source'] = (String(row['Source'] || '') + ' · modifié par ' + qui + ' le ' + quand).slice(0, 1000);
+    writeRow_(t, w, row._row);
+    return { msg: 'Modèle ' + nm + ' enregistré.', list: machinesBase_() };
+  }
+  if (d.action === 'delete') {
+    archiveRow_(L4.trashMach, t, row, user);
+    t.sh.deleteRow(row._row);
+    return { msg: 'Modèle ' + row['Modèle'] + ' supprimé de la base (copie dans l’onglet masqué « ' + L4.trashMach + ' »).', list: machinesBase_() };
+  }
   throw new Error('Action inconnue.');
 }
 
@@ -2115,12 +2148,12 @@ function envoyerAlertes() {
   props.setProperty('ALERTES_ENVOYEES', JSON.stringify(keep));
   return nouvelles.length + ' alerte(s) envoyée(s)';
 }
-/** À lancer une fois depuis l'éditeur : autorise l'envoi d'e-mails et programme l'envoi quotidien des alertes (7 h). */
+/** À lancer une fois depuis l'éditeur : autorise l'envoi d'e-mails et programme l'envoi quotidien des alertes (9 h). */
 function activerAlertesEmail() {
   ScriptApp.getProjectTriggers().forEach(function (tr) { if (tr.getHandlerFunction() === 'envoyerAlertes') ScriptApp.deleteTrigger(tr); });
-  ScriptApp.newTrigger('envoyerAlertes').timeBased().everyDays(1).atHour(7).create();
+  ScriptApp.newTrigger('envoyerAlertes').timeBased().everyDays(1).atHour(9).create();
   setParam_('E-mails d’alerte', 'oui');
-  Logger.log('Alertes par e-mail programmées chaque jour vers 7 h (' + MailApp.getRemainingDailyQuota() + ' e-mails disponibles aujourd’hui).');
+  Logger.log('Alertes par e-mail programmées chaque jour vers 9 h (' + MailApp.getRemainingDailyQuota() + ' e-mails disponibles aujourd’hui).');
 }
 
 /* ---------- Pesée de contrôle d'une bouteille */

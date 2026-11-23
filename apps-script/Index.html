@@ -85,6 +85,8 @@
   .center{align-items:center;text-align:center}
   .logo{width:100%;max-width:340px;border-radius:20px;background:var(--navy);padding:22px 28px;display:flex;align-items:center;justify-content:center}
   .logo svg{width:100%;height:auto}
+  .okmark{width:96px;height:96px;border-radius:28px;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto 6px}
+  .okmark svg{width:64px;height:64px}
   .spin{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:s 1s linear infinite;margin:40px auto}
   @keyframes s{to{transform:rotate(360deg)}}
   .hidden{display:none}
@@ -559,13 +561,24 @@ var V = {
       var act = a.kind === 'detecteur' ? (isAdmin() ? 'goDetecteurs' : 'noop') : 'goBottles';
       h += '<button class="msg ' + (a.grave ? 'err' : 'info') + '" data-act="' + act + '" style="border:0;text-align:left;width:100%;cursor:pointer">' + esc(a.text) + (a.kind === 'detecteur' && !isAdmin() ? ' Préviens l’administrateur.' : ' →') + '</button>';
     });
-    if (sm.machinesAVerifier) h += '<div class="msg info">' + sm.machinesAVerifier + ' machine' + (sm.machinesAVerifier > 1 ? 's' : '') + ' à vérifier dans l’onglet Machines du Google Sheets (colonne « À vérifier » : ajouts et propositions des opérateurs). Vide la case une fois validé.</div>';
+    if (sm.machinesAVerifier) h += '<button class="msg info" data-act="goMachinesVerif" style="border:0;text-align:left;width:100%;cursor:pointer">' + sm.machinesAVerifier + ' machine' + (sm.machinesAVerifier > 1 ? 's' : '') + ' à vérifier (ajouts et propositions des opérateurs) →</button>';
     if (sm.bouteillesSansTare && isAdmin()) h += '<button class="msg info" data-act="goBottles" style="border:0;text-align:left;width:100%;cursor:pointer">' + sm.bouteillesSansTare + ' bouteille' + (sm.bouteillesSansTare > 1 ? 's' : '') + ' sans poids à vide : les pesées ne peuvent pas être calculées →</button>';
-    h += '<button class="btn lime" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>';
+    h += '<button class="btn lime" style="min-height:60px;font-size:17px" data-act="newChantier">' + ICON.plus + 'Nouveau chantier</button>' +
+      '<button class="btn out" data-act="goCerfa">' + ICON.doc + 'Saisir un CERFA papier</button>';
     h += '<div class="sec">Mes chantiers à mettre en service' + (S.loaded ? ' (' + mine.length + ')' : '') + '</div>';
     if (!S.loaded) h += '<div class="spin" aria-label="Chargement"></div>';
     else if (!mine.length) h += '<div class="card center"><b>Tout est à jour</b><div class="note">Tous les chantiers dont tu es responsable sont mis en service.</div></div>';
     else h += '<div style="display:flex;flex-direction:column;gap:10px">' + mine.map(chantierItem).join('') + '</div>';
+    var iv = sm.interventions;
+    if (iv && iv.length) {
+      h += '<div class="sec">Mes dernières interventions</div><div style="display:flex;flex-direction:column;gap:10px">' + iv.map(function (m) {
+        var c = S.chantiers.filter(function (x) { return x.id === m.chantierId; })[0];
+        var qte = m.quantite && (m.op === 'ajout' || m.op === 'recup') ? ' · ' + (m.op === 'ajout' ? '−' : '+') + esc(String(m.quantite).replace('.', ',')) + ' kg' : '';
+        return '<button class="item" data-act="openChantier" data-arg="' + esc(m.chantierId) + '"' + (c ? '' : ' disabled') + '><span class="top"><span class="badge">' + esc(m.label || 'Intervention') + '</span><span class="note">' + esc(m.date) + '</span></span>' +
+          '<span style="font-size:17px;font-weight:700">' + esc(c ? (c.client || 'Sans nom') : 'Chantier supprimé') + '</span>' +
+          '<span class="note">' + esc(c ? [c.ville, [c.marque, c.modele].filter(Boolean).join(' ')].filter(Boolean).join(' · ') : '') + qte + (m.cerfa ? ' · CERFA ' + esc(m.cerfa) : '') + (m.papier ? ' (papier)' : '') + '</span></button>';
+      }).join('') + '</div>';
+    }
     h += '<button class="btn out" data-act="goChantiers">' + ICON.chantiers + 'Tous les chantiers</button>';
     return h;
   },
@@ -917,8 +930,8 @@ function mesCohHtml() {
   var qReel = d.op === 'ajout' ? numOrNaN(b.pesee) - seule : seule - numOrNaN(b.pesee);
   h += '<div class="msg err">La bouteille pèse ' + frNum(seule) + ' kg au lieu de ' + frNum(att) + ' kg attendus (écart de ' + (ecart > 0 ? '+' : '') + Math.round(ecart * 1000) + ' g).' +
     (qReel > 0 ? ' D’après cette pesée, la quantité ' + (d.op === 'ajout' ? 'chargée' : 'récupérée') + ' serait de ' + frNum(qReel) + ' kg.' : '') + '</div>';
-  if (qReel > 0) h += '<div class="g2"><button type="button" class="btn" style="min-height:48px" data-act="fixQte" data-arg="' + Math.round(qReel * 1000) / 1000 + '">Corriger à ' + frNum(qReel) + ' kg</button>' +
-    '<button type="button" class="btn ' + (d.ecartOk ? 'dark' : 'out') + '" style="min-height:48px" data-act="keepQte">' + (d.ecartOk ? '✓ ' : '') + 'Garder ' + frNum(q) + ' kg</button></div>';
+  if (qReel > 0) h += '<div style="display:flex;flex-direction:column;gap:12px;margin:14px 0 10px"><button type="button" class="btn" style="min-height:52px" data-act="fixQte" data-arg="' + Math.round(qReel * 1000) / 1000 + '">Corriger à ' + frNum(qReel) + ' kg</button>' +
+    '<button type="button" class="btn ' + (d.ecartOk ? 'dark' : 'out') + '" style="min-height:52px" data-act="keepQte">' + (d.ecartOk ? '✓ ' : '') + 'Garder ' + frNum(q) + ' kg</button></div>';
   else h += '<button type="button" class="btn ' + (d.ecartOk ? 'dark' : 'out') + '" data-act="keepQte">' + (d.ecartOk ? '✓ ' : '') + 'Garder ' + frNum(q) + ' kg</button>';
   return h + '<div class="note">Si tu gardes ta quantité, la pesée est enregistrée telle quelle et l’écart reste visible dans le registre.</div>';
 }
@@ -1220,7 +1233,7 @@ V.rapport = function () {
 
 V.mesDone = function () {
   var r = S.mesResult || {}, mes = S.ctx && S.ctx.mes;
-  var h = '<div class="card center" style="padding:28px 16px;gap:8px"><div class="logo" style="width:64px;height:64px;background:var(--green);color:#fff">' + ICON.check + '</div>' +
+  var h = '<div class="card center" style="padding:28px 16px;gap:8px"><div class="okmark" aria-hidden="true">' + ICON.check + '</div>' +
     '<div style="font-size:20px;font-weight:700">' + (r.add ? 'Manipulation enregistrée' : 'Mise en service enregistrée') + '</div>' +
     '<div class="note">' + esc(S.cur.client) + (r.cerfa ? ' · CERFA ' + esc(r.cerfa) : ' · sans manipulation de fluide') + '</div></div>' + msgBox();
   h += '<div class="sec">Documents</div><div class="card" style="gap:10px">';
@@ -1930,6 +1943,9 @@ Object.assign(ICON, {
 Object.assign(TITLES, { machines: 'Base machines', registre: 'Registre des mouvements', reglages: 'Réglages', cerfa: 'CERFA papier' });
 
 /* ---------- Base machines */
+var MACH_FIELDS = [['marque', 'Marque *'], ['modele', 'Modèle *'], ['appareil', 'Type d’appareil'], ['gamme', 'Gamme'], ['type', 'Type d’installation'], ['alimentation', 'Alimentation'],
+  ['liaisons', 'Liaisons'], ['fluide', 'Fluide'], ['charge', 'Charge usine (kg)', 'decimal'], ['precharge', 'Longueur préchargée (m)', 'decimal'], ['gpm', 'Charge supplémentaire (g/m)', 'decimal'],
+  ['lmax', 'Longueur max UE-UI (m)', 'decimal'], ['remarque', 'Remarque']];
 V.machines = function () {
   var l = S.machs;
   if (!l) return msgBox() + '<div class="spin" aria-label="Chargement"></div>';
@@ -1945,29 +1961,45 @@ V.machines = function () {
     if (q && (m.marque + m.modele + m.gamme + m.type + m.fluide).toLowerCase().replace(/\s+/g, '').indexOf(q) < 0) return false;
     return true;
   });
+  var tri = f.tri || 'marque', cmp = function (a, b, k) { return String(a[k] || '').localeCompare(String(b[k] || ''), 'fr', { sensitivity: 'base', numeric: true }); };
+  var keys = tri === 'marque' ? ['marque', 'appareil', 'modele'] : tri === 'appareil' ? ['appareil', 'marque', 'modele'] : ['modele'];
+  list.sort(function (a, b) { for (var i = 0; i < keys.length; i++) { var c = cmp(a, b, keys[i]); if (c) return c; } return 0; });
   var h = msgBox() + '<div class="search">' + ICON.search + '<input type="search" data-bind="mf.q" data-rerender="1" value="' + esc(f.q) + '" placeholder="Modèle, gamme, fluide…" aria-label="Rechercher une machine"></div>' +
     '<div class="g2"><label>Marque<select data-bind="mf.marque" data-rerender="1"><option value="">Toutes</option>' + marques.sort().map(function (x) { return '<option' + (x === f.marque ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select></label>' +
-    '<label>Type d’appareil<select data-bind="mf.appareil" data-rerender="1"><option value="">Tous</option>' + app.sort().map(function (x) { return '<option' + (x === f.appareil ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select></label></div>';
+    '<label>Type d’appareil<select data-bind="mf.appareil" data-rerender="1"><option value="">Tous</option>' + app.sort().map(function (x) { return '<option' + (x === f.appareil ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('') + '</select></label></div>' +
+    '<div class="note" style="margin-bottom:-4px">Trier par</div>' + chips([['marque', 'Marque'], ['appareil', 'Type d’appareil'], ['modele', 'Modèle']], tri, 'machTri');
   if (isAdmin() && nVerif) h += chips([['', 'Toutes (' + l.length + ')'], ['1', 'À vérifier (' + nVerif + ')']], f.verif ? '1' : '', 'machVerif');
   h += '<div class="note">' + list.length + ' modèle' + (list.length > 1 ? 's' : '') + '. Touche un modèle pour voir ses caractéristiques.</div>';
-  h += list.slice(0, 120).map(function (m) {
-    var open = S.machOpen === m.row;
+  var grp = tri === 'modele' ? null : tri, last = null;
+  h += list.slice(0, 150).map(function (m) {
+    var open = S.machOpen === m.row, ed = S.machEdit && S.machEdit.row === m.row;
+    var head = '';
+    if (grp && (m[grp] || '—') !== last) { last = m[grp] || '—'; head = '<div class="sec" style="margin-top:10px">' + esc(last) + '</div>'; }
     var row = function (k, v, u) { return v ? '<div class="row"><span>' + k + '</span><span>' + esc(v) + (u ? ' ' + u : '') + '</span></div>' : ''; };
-    return '<div class="item" style="cursor:default"><button type="button" data-act="machToggle" data-arg="' + m.row + '" aria-expanded="' + open + '" style="all:unset;cursor:pointer;display:flex;flex-direction:column;gap:4px">' +
+    var body = '';
+    if (ed) {
+      body = '<div style="display:flex;flex-direction:column;gap:12px;margin-top:10px">' + MACH_FIELDS.map(function (x) { return field(x[1], 'machEdit.f.' + x[0], x[2] ? { mode: x[2] } : null); }).join('') +
+        '<div class="g2" style="gap:12px"><button class="btn out" data-act="machEditCancel">Annuler</button><button class="btn" data-act="machEditSave"' + (S.busy ? ' disabled' : '') + '>Enregistrer</button></div></div>';
+    } else if (open) {
+      body = '<div class="rows" style="margin-top:8px">' + row('Type d’appareil', m.appareil) + row('Type d’installation', m.type) + row('Alimentation', m.alimentation) + row('Liaisons', m.liaisons) + row('Fluide', m.fluide) +
+        row('Charge usine', m.charge, 'kg') + row('Longueur préchargée', m.precharge, 'm') + row('Charge supplémentaire', m.gpm, 'g/m') + row('Longueur max UE-UI', m.lmax, 'm') +
+        row('Remarque', m.remarque) + '</div>' +
+        (isAdmin() ? '<div class="g2" style="margin-top:12px;gap:12px"><button class="btn out" style="min-height:46px" data-act="machDelete" data-arg="' + m.row + '">Supprimer</button>' +
+          '<button class="btn out" style="min-height:46px" data-act="machEditOpen" data-arg="' + m.row + '">Modifier</button></div>' : '');
+    }
+    return head + '<div class="item" style="cursor:default"><button type="button" data-act="machToggle" data-arg="' + m.row + '" aria-expanded="' + (open || ed) + '" style="all:unset;cursor:pointer;display:flex;flex-direction:column;gap:4px">' +
       '<span class="top"><span class="chips" style="gap:6px"><span class="badge">' + esc(m.marque) + '</span>' + (m.fluide && !/^na$/i.test(m.fluide) ? '<span class="badge grey">' + esc(m.fluide) + '</span>' : '') + '</span>' +
       (m.aVerifier ? '<span class="badge warn">À vérifier</span>' : '<span class="note">' + esc(m.appareil) + '</span>') + '</span>' +
-      '<span style="font-size:17px;font-weight:700">' + esc(m.modele) + '</span><span class="note">' + esc([m.gamme, m.type].filter(Boolean).join(' · ')) + '</span></button>' +
-      (open ? '<div class="rows" style="margin-top:8px">' + row('Type d’appareil', m.appareil) + row('Alimentation', m.alimentation) + row('Liaisons', m.liaisons) + row('Fluide', m.fluide) +
-        row('Charge usine', m.charge, 'kg') + row('Longueur préchargée', m.precharge, 'm') + row('Charge supplémentaire', m.gpm, 'g/m') + row('Longueur max UE-UI', m.lmax, 'm') +
-        row('Source', m.source) + row('Remarque', m.remarque) + '</div>' : '') +
-      (m.aVerifier ? '<div class="msg info" style="margin:8px 0 0">' + (m.nouveau ? 'Nouveau modèle ajouté depuis l’appli. ' : '') + esc(m.propositions.join(' · ') || m.aVerifier) + '</div>' +
-        (isAdmin() ? '<div class="g2" style="margin-top:8px"><button class="btn out" style="min-height:46px" data-act="machRefuse" data-arg="' + m.row + '">' + (m.nouveau ? 'Retirer de la base' : 'Refuser') + '</button>' +
+      '<span style="font-size:17px;font-weight:700">' + esc(m.modele) + '</span><span class="note">' + esc([m.gamme, m.type].filter(Boolean).join(' · ')) + '</span></button>' + body +
+      (m.aVerifier && !ed ? '<div class="msg info" style="margin:10px 0 0">' + (m.nouveau ? 'Nouveau modèle ajouté depuis l’appli. ' : '') + esc(m.propositions.join(' · ') || m.aVerifier) + '</div>' +
+        (isAdmin() ? '<div class="g2" style="margin-top:12px;gap:12px"><button class="btn out" style="min-height:46px" data-act="machRefuse" data-arg="' + m.row + '">' + (m.nouveau ? 'Retirer de la base' : 'Refuser') + '</button>' +
           '<button class="btn" style="min-height:46px" data-act="machAccept" data-arg="' + m.row + '">' + (m.nouveau ? 'Garder le modèle' : 'Accepter') + '</button></div>' : '') : '') + '</div>';
   }).join('');
-  if (list.length > 120) h += '<div class="note center">Affine la recherche pour voir les ' + (list.length - 120) + ' autres modèles.</div>';
-  h += '<div class="note">' + (isAdmin() ? 'Accepter met la base à jour avec la proposition de l’opérateur ; Refuser la laisse telle quelle. La base reste modifiable dans l’onglet Machines du tableur.' : 'Les modèles ajoutés ou modifiés depuis un chantier sont vérifiés par l’administrateur.') + '</div>';
+  if (list.length > 150) h += '<div class="note center">Affine la recherche pour voir les ' + (list.length - 150) + ' autres modèles.</div>';
+  h += '<div class="note">' + (isAdmin() ? 'Touche un modèle puis Modifier ou Supprimer. Accepter met la base à jour avec la proposition de l’opérateur ; Refuser la laisse telle quelle. Un modèle supprimé est gardé dans l’onglet masqué « _Machines supprimées » du tableur.' : 'Les modèles ajoutés ou modifiés depuis un chantier sont vérifiés par l’administrateur.') + '</div>';
   return h;
 };
+function machSaved(r) { S.machs = r.list; S.msg = { text: r.msg }; S.machEdit = null; call('listMachines').then(function (l) { S.machines = l || S.machines; }).catch(function () {}); render(); }
 
 /* ---------- Registre des mouvements */
 function regPeriod(k) {
@@ -2003,7 +2035,7 @@ V.reglages = function () {
     '<div class="sec">E-mails d’alerte</div><div class="card">' + chips([['1', 'Activés'], ['', 'Désactivés']], r.alertesEmail ? '1' : '', 'reglAlertes') +
     field('Adresse qui reçoit les alertes (vide = comptes administrateur)', 'regl.emailAlertes', { type: 'email' }) +
     '<button class="btn out" data-act="saveReglEmail">Enregistrer l’adresse</button>' +
-    '<div class="note">Un e-mail par jour (vers 7 h) s’il y a de nouvelles alertes : bouteille neuve presque vide, bouteille de récupération presque pleine, contrôle de détecteur à faire dans les 30 jours ou dépassé. Rappel chaque semaine tant que ce n’est pas réglé. Pour démarrer l’envoi : lancer une fois la fonction <b>activerAlertesEmail</b> dans Apps Script.</div></div>';
+    '<div class="note">Un e-mail par jour (vers 9 h) s’il y a de nouvelles alertes : bouteille neuve presque vide, bouteille de récupération presque pleine, contrôle de détecteur à faire dans les 30 jours ou dépassé. Rappel chaque semaine tant que ce n’est pas réglé. Pour démarrer l’envoi : lancer une fois la fonction <b>activerAlertesEmail</b> dans Apps Script.</div></div>';
 };
 
 /* ---------- Envoi au client (fiche chantier) */
@@ -2089,10 +2121,21 @@ V.cerfa = function () {
 };
 
 Object.assign(A, {
-  goMachines: function () { S.machs = null; S.mf = S.mf || { q: '', marque: '', appareil: '', verif: false }; S.machOpen = null; go('machines'); call('machinesBase').then(function (l) { S.machs = l; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
-  machToggle: function (row) { S.machOpen = S.machOpen === +row ? null : +row; render(); },
+  goMachines: function () { S.machs = null; S.mf = S.mf || { q: '', marque: '', appareil: '', verif: false, tri: 'marque' }; S.machOpen = null; S.machEdit = null; go('machines'); call('machinesBase').then(function (l) { S.machs = l; render(); }).catch(function (e) { S.msg = { err: true, text: e.message }; render(); }); },
+  machToggle: function (row) { if (S.machEdit) return; S.machOpen = S.machOpen === +row ? null : +row; render(); },
   machVerif: function (v) { S.mf.verif = !!v; render(); },
-  machAccept: function (row) { var m = S.machs.filter(function (x) { return x.row === +row; })[0]; run(call('validateMachine', { row: m.row, modele: m.modele, action: 'accept' })).then(function (r) { S.machs = r.list; S.msg = { text: r.msg }; render(); }); },
+  machTri: function (v) { S.mf.tri = v; render(); },
+  goMachinesVerif: function () { S.mf = S.mf || { q: '', marque: '', appareil: '', verif: false, tri: 'marque' }; S.mf.verif = true; S.mf.q = ''; S.mf.marque = ''; S.mf.appareil = ''; A.goMachines(); },
+  machEditOpen: function (row) { var m = S.machs.filter(function (x) { return x.row === +row; })[0], f = {}; MACH_FIELDS.forEach(function (x) { f[x[0]] = m[x[0]] || ''; }); S.machEdit = { row: m.row, modele: m.modele, f: f }; render(); },
+  machEditCancel: function () { S.machEdit = null; render(); },
+  machEditSave: function () { var e = S.machEdit; run(call('validateMachine', { row: e.row, modele: e.modele, action: 'edit', fields: e.f })).then(machSaved); },
+  machDelete: function (row) {
+    var m = S.machs.filter(function (x) { return x.row === +row; })[0];
+    S.dialog = { text: 'Supprimer ' + m.modele + ' (' + m.marque + ') de la base machines ?', note: 'Les chantiers déjà créés avec ce modèle ne changent pas. Une copie est gardée dans l’onglet masqué « _Machines supprimées ».', yes: 'machDeleteOk', yesLabel: 'Oui, supprimer' };
+    S.dialogArg = m; render();
+  },
+  machDeleteOk: function () { var m = S.dialogArg; S.dialog = null; run(call('validateMachine', { row: m.row, modele: m.modele, action: 'delete' })).then(machSaved); },
+  machAccept: function (row) { var m = S.machs.filter(function (x) { return x.row === +row; })[0]; run(call('validateMachine', { row: m.row, modele: m.modele, action: 'accept' })).then(machSaved); },
   machRefuse: function (row) {
     var m = S.machs.filter(function (x) { return x.row === +row; })[0];
     S.dialog = { text: m.nouveau ? 'Retirer ' + m.modele + ' de la base machines ?' : 'Refuser la proposition pour ' + m.modele + ' ?', note: m.nouveau ? 'Une copie est gardée dans l’onglet masqué « _Machines supprimées ».' : 'La base reste telle quelle.', yes: 'machRefuseOk', yesLabel: m.nouveau ? 'Oui, retirer' : 'Oui, refuser' };
@@ -2228,7 +2271,9 @@ function applyReleve(r) {
   f._sugg = (r.suggestions || []).filter(function (x) { return findMachine(x.modele); });
   f._modeleLu = r.modeleLu || '';
   // Pas de référence exacte : on présélectionne le modèle le plus probable, sans écraser ce qui a été lu
-  if (!findMachine(f.modele) && f._sugg.length) applyMachine(f, findMachine(f._sugg[0].modele), true);
+  var exact = findMachine(f.modele);
+  if (exact) applyMachine(f, exact, true);   // modèle reconnu : charge usine, précharge, g/m… repris de la base s'ils n'ont pas été lus
+  else if (f._sugg.length) applyMachine(f, findMachine(f._sugg[0].modele), true);
 }
 document.addEventListener('change', function (e) {
   if (e.target.id !== 'releveInput') return;
